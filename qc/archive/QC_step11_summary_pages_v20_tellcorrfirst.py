@@ -190,11 +190,23 @@ def _choose_columns(tab: fits.FITS_rec, prefer_flux: Optional[str], prefer_lam: 
 
 def _choose_display_spectrum(tab: fits.FITS_rec, lam_col: str) -> Tuple[np.ndarray, np.ndarray, str, str]:
     """
-    Choose the best spectrum to display:
-      1) FLUX_TELLCOR_O2 (telluric-corrected) in red
-      2) FLUX_FLAM (calibrated) in black
-      3) FLUX in red
-    Returns lam, flux, ylabel, color.
+    Choose the best spectrum to display for the Step11 summary pages.
+
+    Priority:
+      1) FLUX_FLAM       (final flux-calibrated spectrum) in black
+      2) FLUX_TELLCOR_O2 (telluric-corrected pre-fluxcal spectrum) in red
+      3) FLUX            (raw extracted spectrum) in red
+
+    Returns
+    -------
+    lam : ndarray
+        Wavelength array.
+    flux : ndarray
+        Flux array to display.
+    ylabel : str
+        Label identifying the displayed flux column.
+    color : str
+        Matplotlib line color.
     """
     lam = np.asarray(tab[lam_col], float)
     cols = [c.name for c in tab.columns]
@@ -207,17 +219,18 @@ def _choose_display_spectrum(tab: fits.FITS_rec, lam_col: str) -> Tuple[np.ndarr
             return None
         return arr
 
-    arr = finite_array("FLUX_TELLCOR_O2")
-    if arr is not None:
-        return lam, arr, "FLUX_TELLCOR_O2", "red"
-
+    # Final Step11 product should be shown by default
     arr = finite_array("FLUX_FLAM")
     if arr is not None:
         return lam, arr, "FLUX_FLAM", "k"
 
+    arr = finite_array("FLUX_TELLCOR_O2")
+    if arr is not None:
+        return lam, arr, "FLUX_TELLCOR_O2", "red"
+
     arr = finite_array("FLUX")
     if arr is not None:
-        return lam, arr, "Flux (ADU)", "red"
+        return lam, arr, "FLUX", "red"
 
     # last resort: any finite numeric column that is not wavelength or obvious variance/sky helpers
     for c in cols:

@@ -188,7 +188,11 @@ QUARTZ_SLITS_OFF = "038.quartz_biascorr_cr_rowcorr.fits"
 QUARTZ_SLITS_ON_EVEN = "039.quartz_biascorr_cr_rowcorr.fits"
 QUARTZ_SLITS_ON_ODD = "040.quartz_biascorr_cr_rowcorr.fits"
 
+# -----------------------------------------------------------------------------
+# SISI Image for Astrometry
+# -----------------------------------------------------------------------------
 
+SISI_IMAGE_FITS = SISI_DIR / "Coadd_i_median_078-082_ff_flipx_wcs_manual.fits"
 
 # -----------------------------------------------------------------------------
 # Canonical products
