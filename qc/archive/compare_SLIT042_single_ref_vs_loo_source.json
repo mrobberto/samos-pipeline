@@ -1,0 +1,62 @@
+{
+  "target_slit": "SLIT042",
+  "labels": [
+    "single_ref",
+    "loo_source"
+  ],
+  "summary_a": {
+    "target_slit": "SLIT042",
+    "ref_slit": "SLIT025",
+    "signal_column": "OBJ_PRESKY",
+    "extract": "/Users/robberto/Library/CloudStorage/Box-Box/My Documents - Massimo Robberto/@Massimo/_Science/2. Projects_HW/2017.SAMOS/_Run8_Science_2026_01/SAMI/Dolidze25/reduced/08_extract1d/extract1d_optimal_ridge_all_wav.fits",
+    "seed_csv": "/Users/robberto/Library/CloudStorage/Box-Box/My Documents - Massimo Robberto/@Massimo/_Science/2. Projects_HW/2017.SAMOS/_Run8_Science_2026_01/SAMI/Dolidze25/reduced/09_oh_refine/SLIT025_reference_forest_components_grouped.csv",
+    "n_lines": 184,
+    "init_found": 184,
+    "median_abs_dmu_nm": 0.257778113486097,
+    "median_sigscale": 1.0,
+    "median_areascale": 2.460462502591165,
+    "residual_candidates": 12,
+    "resid_min": -1.5151593564875276,
+    "rms_raw": 0.17426097279484679,
+    "rms_robust": 0.05010266293613386,
+    "bin_nm": 10.0,
+    "anchor_stat": "median",
+    "spline_s": 0.25,
+    "clip_sigma": 3.5,
+    "blend_gap_nm": 0.35,
+    "cycles": [
+      {
+        "cycle": 1,
+        "rms_raw": 0.1743071232013718,
+        "rms_robust": 0.050837784876740656
+      },
+      {
+        "cycle": 2,
+        "rms_raw": 0.1742634252060805,
+        "rms_robust": 0.050351446001136065
+      },
+      {
+        "cycle": 3,
+        "rms_raw": 0.17423678625612815,
+        "rms_robust": 0.04968506619964169
+      },
+      {
+        "cycle": 4,
+        "rms_raw": 0.17426097279484679,
+        "rms_robust": 0.05010266293613386
+      }
+    ]
+  },
+  "summary_b": {
+    "target_slit": "SLIT042",
+    "extract": "/Users/robberto/Library/CloudStorage/Box-Box/My Documents - Massimo Robberto/@Massimo/_Science/2. Projects_HW/2017.SAMOS/_Run8_Science_2026_01/SAMI/Dolidze25/reduced/08_extract1d/extract1d_optimal_ridge_all_wav.fits",
+    "signal_column": "OBJ_PRESKY",
+    "n_input_slits": 62,
+    "n_template_members": 61,
+    "template_amplitude": 5.0,
+    "rms_raw": 0.09768375435153784,
+    "rms_robust": 0.04717248101808739,
+    "max_lag_pix": 6,
+    "min_valid_fraction": 0.6
+  }
+}

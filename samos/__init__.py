@@ -1,0 +1,1 @@
+from .class_samos import SAMOS as Class_SAMOS

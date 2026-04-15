@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# Large data / reductions
+_Run8_Science_*/
+*.fits
+*.csv
+*.png
+*.pdf
+
+# Temporary / analysis
+Untitled.ipynb

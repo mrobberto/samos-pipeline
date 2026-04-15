@@ -1,0 +1,5 @@
+These geometry/RADEC scripts are advanced diagnostics, not part of the routine Step11 QC workflow:
+- QC11.4_fit_RADEC_from_trace_geometry.py
+- QC11.4_fit_RADEC_from_trace_geometry_v2.py
+- QC11.4_fit_A_band_vs_DEC_and_correct_radec.py
+- QC11.4 Y_Aband_vs_DEC.py
