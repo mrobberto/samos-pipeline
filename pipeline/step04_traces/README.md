@@ -2,10 +2,9 @@
 
 ## Purpose
 
-Remove cosmic rays from all bias-corrected frames using a LAcosmic-style algorithm.
+Determine the geometric layout of spectral traces on the detector using quartz-lamp exposures.
 
-This step produces clean science and calibration images suitable for trace finding, flat-fielding, and spectral extraction.
-
+This step produces the reference trace geometry and slit masks used by all subsequent extraction and calibration steps.
 ---
 
 ## Input
@@ -13,41 +12,75 @@ This step produces clean science and calibration images suitable for trace findi
 Directory:
 
 ```python
-config.ST02_BIASCORR
+config.ST03_CRCLEAN
 ```
-
-This contains bias-corrected images produced by Step02.
 
 Expected files:
 
-```text
-*_biascorr.fits
+*_biascorr_cr_rowcorr.fits   (quartz frames)
+
+Paired exposures:
+
+quartz with slit pattern (Q_on)
+quartz with mirrors off (Q_off)
 ```
 
 ---
 
-## Processing
+##  Processing
 
-For each input frame:
+1. Build quartz difference image:
 
-1. The image is read as a 2D detector frame.
+Q_diff = Q_on - Q_off
 
-2. Cosmic rays are identified and removed using:
+This removes diffuse background and isolates slit traces.
 
-```python
-SAMOS.CR_correct()
-```
+2. Detect slit centers:
 
-based on a LAcosmic-style algorithm.
+collapse image along dispersion
 
-3. Parameters used include:
+identify peaks corresponding to slit traces
 
-* `cr_threshold`
-* `neighbor_threshold`
-* `readnoise`
-* `gain`
+3. Assign slit IDs:
 
-4. A cosmic ray mask is also generated.
+ordered by RA (right → left)
+
+EVEN / ODD numbering scheme
+
+4. Build slit masks:
+
+row-wise segmentation around each trace
+
+local background estimation
+
+contiguous detection above threshold
+
+optional edge trimming
+
+5. Construct slit ID map:
+
+assign each pixel to nearest slit center
+
+6. Identify higher-order features (optional):
+
+faint second-order signal may appear at long wavelengths
+
+separated from first-order trace by a gap
+
+when detected, an empirical cutoff is applied within the gap
+
+pixels beyond this cutoff are excluded from the mask
+
+7. Derive trace geometry:
+
+compute per-row centroid and edges
+
+fit smooth polynomial models:
+
+ x_center(y)
+ x_left(y)
+ x_right(y)
+
 
 ---
 
@@ -56,39 +89,40 @@ based on a LAcosmic-style algorithm.
 Directory:
 
 ```python
-config.ST03_CRCLEAN
+config.ST04_TRACES
 ```
 
 Output files:
 
 ```text
-<original_name>_biascorr_cr.fits
+Even_traces.fits
+Even_traces_mask.fits
+Even_traces_slitid.fits
+Even_traces_slit_table.csv
+Even_traces_geometry.fits
+Even_traces_gap_cuts.csv
 ```
-
-Each file contains:
-
-* Primary HDU: cleaned image
-* Extension `CRMASK`: cosmic ray mask
-
 ---
+## Notes
 
-## Header updates
+    Processing is performed in detector coordinates
 
-The primary header includes:
+    No rectification is applied at this stage
 
-```text
-CRCLEAN = True    / Cosmic rays removed
-CRALG   = LACOSMIC
-CRTHR   = threshold used
-CRRN_E  = readnoise used
-CRGAIN  = gain used
-```
+    Second-order trimming is:
 
-The `CRMASK` extension contains:
+        conservative
 
-```text
-1 = pixel flagged as cosmic ray
-```
+        applied only when a clear gap is detected
+
+    The primary rejection of out-of-range wavelengths is applied later after wavelength calibration
+
+## Pipeline context
+    
+    Step03 → cosmic-ray cleaned frames
+    Step04 → trace determination
+    Step05 → pixel flat
+    Step06 → science rectification
 
 ---
 
@@ -106,34 +140,12 @@ or from command line:
 python step03_crclean/step03_crclean.py
 ```
 
----
-
-## Notes
-
-* This step must be run **after Step02**
-* All frames (science, flats, arcs) are processed
-* Output images are clean 2D detector frames
-
----
-
-## Design choices
-
-* Uses LAcosmic-style detection for robust CR removal
-* Produces a **separate mask extension** for diagnostics
-* Avoids reprocessing files already marked with `CRCLEAN=True`
-* Operates exclusively on bias-corrected data
 
 ---
 
 ## Pipeline context
 
-```text
-Step00 → standardize orientation
-Step01 → build master bias
-Step02 → apply bias correction
-Step03 → remove cosmic rays
-Step04 → trace identification
-```
+
 
 ---
 

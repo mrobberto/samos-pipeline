@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Step 04 (Level2-style, robust for dense packed slitlets):
+Step 04 — Trace determination (Level2-style, robust for dense packed slitlets)
 
 1) Build quartz trace image
    Even_traces = quartzB - quartzA (mosaicked frames)
@@ -14,7 +14,7 @@ Step 04 (Level2-style, robust for dense packed slitlets):
 3) Assign slit IDs in RA order
    - RA increases right → left on detector
    - centers sorted by X descending
-   - EVEN slits labeled 0,2,4,... 
+   - EVEN slits labeled 0,2,4,...
    - ODD slits labeled 1,3,5,...
 
 4) Build slit mask via row-wise local segmentation
@@ -26,9 +26,15 @@ Step 04 (Level2-style, robust for dense packed slitlets):
 5) Construct slit ID map
    - assign each mask pixel to nearest slit center
 
-6) Optional: remove second spectral order
-   - detect quartz continuum gap along dispersion
-   - trim mask/slitid beyond the gap
+6) Optional: identify second spectral order
+   - quartz traces may show faint higher-order features
+     at the long-wavelength end of some slitlets
+   - these features are separated from the first-order
+     spectrum by a gap in detector space
+   - when a clear gap is detected, an empirical cutoff
+     is placed within the gap and pixels beyond it are excluded
+   - this ensures that geometry products describe only
+     the uncontaminated first-order spectrum
 
 7) Derive slit geometry model
    - compute per-row centroid and edges
@@ -37,7 +43,7 @@ Step 04 (Level2-style, robust for dense packed slitlets):
         x_left(y)
         x_right(y)
 
-Outputs (reduced/04_pixflat)
+Outputs (reduced/04_traces)
 
 Trace products
   Even_traces.fits
@@ -52,11 +58,11 @@ Slit catalog
 Trace geometry reference
   Even_traces_geometry.fits
 
-Diagnostic
+Diagnostics
   Even_traces_traces.reg
   Even_traces_gap_cuts.csv
 
-  
+
 Run commands
 ------------
 python pipeline/step04_traces/step04_make_traces.py --set EVEN
@@ -66,7 +72,6 @@ or Spyder:
 
 runfile("pipeline/step04_traces/step04_make_traces.py", args="--set EVEN")
 runfile("pipeline/step04_traces/step04_make_traces.py", args="--set ODD")
-
 """
 
 import logging
@@ -394,8 +399,11 @@ def detect_gap_end_y(profile_y: np.ndarray,
                      min_run: int = 120,
                      search_band: int = 2200) -> int | None:
     """
-    Find the first long 'low' run (gap) from the bottom upward.
-    Return y_gap_end (last y of the gap). Cut should be y_cut = y_gap_end.
+    Find the first long 'low' run (gap) scanning from the high-Y end downward.
+    Return the midpoint of the first significant low-signal gap encountered
+    when scanning from the high-Y end downward. Rows above this cut are
+    treated as second-order contamination and removed.
+    The trim cut should then remove rows ABOVE this value.
     """
     sm = _smooth_1d(profile_y, w=smooth_w)
 
@@ -408,39 +416,53 @@ def detect_gap_end_y(profile_y: np.ndarray,
 
     low_thr = float(low_frac) * main_level
 
-    lo = y0
-    hi = min(y1, y0 + int(search_band))
+    # Search near the high-Y end (where the 2nd order appears in your data)
+    hi = y1
+    lo = max(y0, y1 - int(search_band))
+
     seg = np.nan_to_num(sm[lo:hi+1], nan=np.inf)
 
-    is_low = seg < low_thr
+    # Reverse so we scan from high Y downward
+    seg_rev = seg[::-1]
+    is_low = seg_rev < low_thr
 
-    # find first low-run of length >= min_run
     count = 0
     start = None
-    
+
     for i, ok in enumerate(is_low):
         if ok:
             if count == 0:
                 start = i
             count += 1
         else:
-            """
-            if count >= min_run:
-                end = i - 1
-                return int(lo + end)  # y_gap_end
-            count = 0
-            start = None
-            """
             if count >= min_run:
                 end = i - 1
                 gap_len = end - start + 1
-                if gap_len < 300:     # NEW: minimum physical gap size
+                if gap_len < 200:
                     return None
-                return int(lo + end)
             
-                # handle run reaching the end
-                if count >= min_run:
-                    return int(lo + (len(is_low) - 1))
+                # Convert reversed indices back to original Y coordinates
+                # start/end of gap in original indexing
+                y_gap_start = hi - end
+                y_gap_end   = hi - start
+            
+                # Cut at the midpoint of the detected gap
+                y_gap_mid = 0.5 * (y_gap_start + y_gap_end)
+                return int(round(y_gap_mid))
+
+            count = 0
+            start = None
+
+    # Handle run reaching the end
+    if count >= min_run:
+        end = len(is_low) - 1
+        gap_len = end - start + 1
+        if gap_len >= 200:
+            y_gap_start = hi - end
+            y_gap_end   = hi - start
+            y_gap_mid = 0.5 * (y_gap_start + y_gap_end)
+            return int(round(y_gap_mid))
+    
 
     return None
 
@@ -448,7 +470,7 @@ def detect_gap_end_y(profile_y: np.ndarray,
 def trim_second_order_from_mask(diff: np.ndarray, mask: np.ndarray, slitid: np.ndarray, slit_rows: list) -> tuple[np.ndarray, np.ndarray, list]:
     """
     Given quartz diff image, boolean mask and slitid map, detect per-slit gap positions and
-    zero-out mask/slitid beyond the gap.
+    zero-out mask/slitid on the high-Y side of the gap, where the second-order contamination is present
 
     Returns (mask, slitid, updated_slit_rows).
 
@@ -505,16 +527,16 @@ def trim_second_order_from_mask(diff: np.ndarray, mask: np.ndarray, slitid: np.n
             else:
                 y_cut = None
         """
-        y_gap_end = detect_gap_end_y(prof_y, y0=y0, y1=y1)
-        y_cut = y_gap_end  # remove everything at/below the gap end (i.e., remove 2nd order + gap)
+        y_gap_start = detect_gap_end_y(prof_y, y0=y0, y1=y1)
+        y_cut = y_gap_start  # remove everything at/above this cut (upper 2nd-order side)
         
         if y_cut is not None:
-            # remove bottom rows <= y_cut
+            # remove top rows >= y_cut
             kill = comp.copy()
-            kill[y_cut+1:, :] = False   # keep rows > y_cut
+            kill[:y_cut, :] = False   # keep rows below the cut
             mask[kill] = False
             slitid[kill] = BKGID
-
+    
         gap_cuts[sid] = y_cut
 
     n_found = sum(1 for v in gap_cuts.values() if v is not None)
@@ -1160,8 +1182,15 @@ def main():
 
 
     # -------------------------------------------------------------------------
+    # --- SAVE PRE-TRIM STATE ---
+    mask_pretrim_path = OUTDIR / f"{TRACE_BASE}_mask_pretrim.fits"
+    slitid_pretrim_path = OUTDIR / f"{TRACE_BASE}_slitid_pretrim.fits"
     
-
+    fits.PrimaryHDU(mask.astype(np.uint8)).writeto(mask_pretrim_path, overwrite=True)
+    fits.PrimaryHDU(slitid.astype(np.int16)).writeto(slitid_pretrim_path, overwrite=True)
+    
+    log.info("Wrote %s", mask_pretrim_path)
+    log.info("Wrote %s", slitid_pretrim_path)
     # -------------------------------------------------------------------------
     # 4b) OPTIONAL: trim 2nd order using quartz gap, per slit (from continuum)
     # -------------------------------------------------------------------------
