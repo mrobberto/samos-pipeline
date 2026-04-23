@@ -344,13 +344,35 @@ def main():
     lines_nm, _lines_I = load_nist_bright_lines(NIST_DIR, nkeep=N_LINES_KEEP, lam_min=LAMBDA_MIN, lam_max=LAMBDA_MAX)
     log.info("Total NIST bright lines used: %d", len(lines_nm))
 
-    peaks_use = np.sort(peaks[: min(N_PEAKS_REFINE, len(peaks))]).astype(float)
+    peaks_use = np.sort(peaks[: min(N_PEAKS_REFINE, len(peaks))]).astype(float)    
+    # --- ADD RED-END PEAKS (manual extension) ---
+    extra_red_pixels = np.array([1119, 1038, 692], dtype=float)  # from your identification
+    #    
+    # convert to working coordinates
+    extra_red_y = extra_red_pixels - YWIN0
+    #
+    # append
+    peaks_use = np.concatenate([peaks_use, extra_red_y])
+    
+    
     p = None
     tol = REFINE_TOL_NM_START
 
     for it in range(MAX_ITERS):
         lam_pred = (a0 * peaks_use + b0) if p is None else p(peaks_use)
         pick = nearest_lines(lam_pred, lines_nm)
+        # --- OVERRIDE red-end peak matches ---
+        red_lines_nm = np.array([912.2967, 922.4499, 965.7786])
+        #       
+        # find indices of the added peaks
+        for i, y in enumerate(peaks_use):
+            if y < 0:  # red extrapolation region
+                # match manually based on order (safe here)
+                idx = np.where(peaks_use == y)[0][0]
+                if idx < len(red_lines_nm):
+                    pick[idx] = red_lines_nm[idx]
+            
+        
         resid = lam_pred - pick
 
         ok = np.abs(resid) < tol

@@ -1,17 +1,70 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Step 06c — rectify slitlets into TRACECOORDS using the baseline edge-warp model.
+Step 06c — Rectify science slitlets into TRACECOORDS using the Step04 geometry model.
 
-This is a plumbing-only port of the older Step06c science behavior:
-- uses Step04 slitid + geometry + slit table
-- uses the edge-based width model (LC*/RC*) when present
-- keeps TRACECOORDS-only output
-- keeps PADX superpadding
-- keeps row screening
-- updates only config/path/CLI plumbing
+Purpose
+-------
+Generate per-slit rectified 2D science cutouts in TRACECOORDS from the Step06b
+science image. The transformation uses the slit geometry derived in Step04 and,
+when available, the baseline edge-warp model defined by the left/right slit-edge
+polynomials.
 
-Run:
+This step does not perform science-frame combination itself; rather, it consumes
+the Step06b science product and maps each slit into a common coordinate system
+with dispersion along Y and cross-dispersion along X.
+
+Method
+------
+For each slit in the selected trace set (EVEN or ODD), the code:
+
+1. reads the Step06b science frame;
+2. reads the Step04 slit ID map, geometry file, and slit-width table;
+3. evaluates the slit center and, when present, the left/right edge models;
+4. rectifies the slit using an edge-based width-preserving mapping;
+5. applies a constant-width mask in rectified space;
+6. rejects rows with insufficient valid pixels;
+7. writes the surviving slit cutout as an extension in a multi-extension FITS file.
+
+Key features preserved from the baseline implementation:
+- TRACECOORDS-only output
+- edge-based width model (LC*/RC*) when available
+- PADX superpadding
+- row screening
+- Step04-driven slit geometry and per-slit widths
+
+Inputs
+------
+- Step06b science image:
+    FinalScience*_pixflatcorr_clipped_<TRACESET>.fits
+  or
+    FinalScience*_reg_pixflatcorr_clipped_<TRACESET>.fits
+
+- Step04 geometry products:
+    <Even/Odd>_traces_slitid.fits
+    <Even/Odd>_traces_geometry.fits
+    <Even/Odd>_traces_slit_table.csv
+
+Outputs
+-------
+- Multi-extension FITS file containing one rectified 2D cutout per slit:
+    <input_stem>_tracecoords.fits
+
+Each extension contains:
+- the rectified slit image in TRACECOORDS,
+- detector-coordinate provenance,
+- the geometric coefficients used for the mapping.
+
+Notes
+-----
+- Rectification is intentionally performed after detector-level corrections and
+  flat-fielding have already been applied.
+- The output is a uniform 2D representation for wavelength calibration, quality
+  control, and later extraction/analysis.
+- The script operates separately on EVEN and ODD trace sets.
+
+Run
+---
   PYTHONPATH=. python pipeline/step06_science_rectify/step06c_rectify_tracecoords.py --traceset EVEN
   PYTHONPATH=. python pipeline/step06_science_rectify/step06c_rectify_tracecoords.py --traceset ODD
 """

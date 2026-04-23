@@ -205,7 +205,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    st09 = Path(config.ST09_TELLURIC)
+    st10 = Path(config.ST09_TELLURIC)
     st11 = Path(config.ST11_FLUXCAL)
     st11.mkdir(parents=True, exist_ok=True)
 
@@ -213,8 +213,8 @@ def main():
     extract_fits = args.extract_fits
     if extract_fits is None:
         preferred = [
-            st09 / "extract1d_optimal_ridge_all_wav_OHref_tellcorr.fits",
-            st09 / "extract1d_optimal_ridge_all_wav_tellcorr_OHref_tellcorr.fits",
+            st10 / "extract1d_optimal_ridge_all_wav_ohclean_tellcorr.fits",
+            #st10 / "extract1d_optimal_ridge_all_wav_tellcorr_OHref_tellcorr.fits",
         ]
         extract_fits = None
         for p in preferred:

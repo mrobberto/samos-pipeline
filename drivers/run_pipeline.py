@@ -60,6 +60,11 @@ class Stage:
     sets: tuple[str, ...] = ()
     args_template: str = ""
 
+    @property
+    def is_set_based(self) -> bool:
+        return len(self.sets) > 0
+    
+
 # -----------------------------------------------------------------------------
 # Stage registry
 # -----------------------------------------------------------------------------

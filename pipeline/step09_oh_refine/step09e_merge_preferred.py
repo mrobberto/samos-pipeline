@@ -94,8 +94,16 @@ def slit_num(name: str) -> int:
 def list_slit_dirs(root: Path) -> list[Path]:
     out: list[Path] = []
     for p in sorted(root.iterdir()):
-        if p.is_dir() and norm_slit(p.name).startswith("SLIT"):
-            out.append(p)
+        if not p.is_dir():
+            continue
+        name = p.name.strip().upper()
+        if not name.startswith("SLIT"):
+            continue
+        try:
+            _ = slit_num(name)
+        except Exception:
+            continue
+        out.append(p)
     return sorted(out, key=lambda p: slit_num(p.name))
 
 

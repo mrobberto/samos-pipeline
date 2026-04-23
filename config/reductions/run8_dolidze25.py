@@ -88,6 +88,9 @@ QC09_DIR = qc_step_dir(QC_DIR, "09_abab")
 QC10_DIR = qc_step_dir(QC_DIR, "10_telluric")
 QC11_DIR = qc_step_dir(QC_DIR, "11_fluxcal")
 
+FILTER_R = REFERENCE_FILTERS_DIR / NAME_FILTER_R
+FILTER_I = REFERENCE_FILTERS_DIR / NAME_FILTER_I
+FILTER_Z = REFERENCE_FILTERS_DIR / NAME_FILTER_Z
 
 # -----------------------------------------------------------------------------
 # Compatibility aliases for existing scripts
@@ -114,8 +117,8 @@ ST09_TELLURIC = ST10_TELLURIC
 ST10_OH_REFINE = ST09_ABAB
 
 
-WAVECAL_YWIN0 = 1225
-WAVECAL_FIRSTLEN = 2875
+WAVECAL_YWIN0 = 1000
+WAVECAL_FIRSTLEN = 3100
 
 
 # -----------------------------------------------------------------------------
@@ -286,12 +289,25 @@ EXTRACT1D_TELLCOR = ST10_TELLURIC / NAME_EXTRACT1D_TELLCOR
 
 # step 11 = flux calibration
 STEP11_INPUT_SPECTRA = EXTRACT1D_TELLCOR
+
+# Main Step11 products
 STEP11_RADEC = ST11_FLUXCAL / NAME_STEP11_RADEC
 STEP11_PHOTCAT = ST11_FLUXCAL / NAME_STEP11_PHOTCAT
 STEP11_QAPLOT = ST11_FLUXCAL / NAME_STEP11_QAPLOT
 EXTRACT1D_FLUXCAL = ST11_FLUXCAL / NAME_EXTRACT1D_FLUXCAL
 FLUXCAL_SUMMARY_CSV = ST11_FLUXCAL / NAME_FLUXCAL_SUMMARY_CSV
 
+# Coefficient-based calibration products used by the response-summary QC
+ABSCAL_SUMMARY_CSV = ST11_FLUXCAL / NAME_ABSCAL_SUMMARY_CSV
+MASTER_RESPONSE_FITS = ST11_FLUXCAL / NAME_MASTER_RESPONSE_FITS
+
+## Step11 QC outputs
+# Step11 keeps its QC products inside the step directory itself
+# rather than under the generic reduced/qc tree.
+STEP11_QC_DIR = ST11_FLUXCAL / "qc_step11"
+QC_STEP11_GRID_PDF = STEP11_QC_DIR / NAME_QC_STEP11_GRID_PDF
+QC_STEP11_SUMMARY_PDF = STEP11_QC_DIR / NAME_QC_STEP11_SUMMARY_PDF
+QC_STEP11_RESPONSE_PDF = STEP11_QC_DIR / NAME_QC_STEP11_RESPONSE_PDF
 
 # -----------------------------------------------------------------------------
 # Temporary compatibility aliases
@@ -347,6 +363,7 @@ ALL_DIRS = [
     ST09_ABAB,
     ST10_TELLURIC,
     ST11_FLUXCAL,
+    STEP11_QC_DIR,
     QC_DIR,
     QC04_DIR,
     QC05_DIR,
@@ -386,4 +403,11 @@ def summary() -> dict[str, str]:
         "ST10_TELLURIC": str(ST10_TELLURIC),
         "ST11_FLUXCAL": str(ST11_FLUXCAL),
         "STEP11_INPUT_SPECTRA": str(STEP11_INPUT_SPECTRA),
-    }
+        "EXTRACT1D_FLUXCAL": str(EXTRACT1D_FLUXCAL),
+        "FLUXCAL_SUMMARY_CSV": str(FLUXCAL_SUMMARY_CSV),
+        "ABSCAL_SUMMARY_CSV": str(ABSCAL_SUMMARY_CSV),
+        "MASTER_RESPONSE_FITS": str(MASTER_RESPONSE_FITS),
+        "QC_STEP11_GRID_PDF": str(QC_STEP11_GRID_PDF),
+        "QC_STEP11_SUMMARY_PDF": str(QC_STEP11_SUMMARY_PDF),
+        "QC_STEP11_RESPONSE_PDF": str(QC_STEP11_RESPONSE_PDF),
+            }

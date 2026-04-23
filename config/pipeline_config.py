@@ -84,10 +84,28 @@ NAME_EXTRACT1D_TELLCOR = "extract1d_optimal_ridge_all_wav_ohclean_tellcorr.fits"
 # Step11 = flux calibration
 NAME_STEP11_RADEC = "slit_trace_radec_all.csv"
 NAME_STEP11_PHOTCAT = "slit_trace_radec_skymapper_all.csv"
-NAME_STEP11_QAPLOT = "Step11_fluxcal_QA.png"
-NAME_EXTRACT1D_FLUXCAL = "Extract1D_fluxcal.fits"
-NAME_FLUXCAL_SUMMARY_CSV = "step11_fluxcal_summary.csv"
 
+# Main Step11 science products
+NAME_EXTRACT1D_FLUXCAL = "Extract1D_fluxcal.fits"
+NAME_FLUXCAL_SUMMARY_CSV = "Step11_fluxcal_summary.csv"
+NAME_STEP11_QAPLOT = "Step11_fluxcal_QA.png"
+
+# Calibration-fit diagnostics / closeout products
+NAME_ABSCAL_SUMMARY_CSV = "extract1d_optimal_ridge_all_wav_abscal_summary.csv"
+NAME_MASTER_RESPONSE_FITS = "extract1d_optimal_ridge_all_wav_master_response.fits"
+
+# QC products
+NAME_QC_STEP11_GRID_PDF = "qc_step11_fluxcal_grid.pdf"
+NAME_QC_STEP11_SUMMARY_PDF = "qc_step11_summary_pages.pdf"
+NAME_QC_STEP11_RESPONSE_PDF = "qc_step11_response_summary.pdf"
+
+REFERENCE_FILTERS_DIR = REFERENCE_TABLES_DIR / "filters"
+REFERENCE_PHOTOMETRY_DIR = REFERENCE_TABLES_DIR / "photometry"
+
+NAME_FILTER_G = "skymapper_g_nm.txt"
+NAME_FILTER_R = "skymapper_r_nm.txt"
+NAME_FILTER_I = "skymapper_i_nm.txt"
+NAME_FILTER_Z = "skymapper_z_nm.txt"
 
 PREPROC_SUBDIRS = {
     "00": "00_orient",

@@ -1,278 +1,177 @@
-# step11_fluxcal
+# Step 11 — Flux Calibration
 
-## Purpose
-
-Perform photometric flux calibration of extracted spectra using broadband photometry.
-
-This step:
-
-1. Extracts slit sky coordinates (RA/DEC)
-2. Queries external photometric catalogs (SkyMapper)
-3. Applies instrument throughput correction
-4. Applies global color-response correction
-5. Anchors spectra to broadband photometry
-
-The result is a set of **flux-calibrated 1D spectra** suitable for scientific analysis.
+This step performs the **absolute flux calibration** of the extracted 1D spectra and a subsequent **empirical refinement** using external photometry (SkyMapper).
 
 ---
 
-## Input
+## Overview
 
-### Extracted spectra
+### Step11a — Slit → Sky coordinates extraction
 
-From Step10:
+Script:
+`step11a_extract_header_radec_resilient.py`
 
-```python
-config.ST10_OH
-```
+* Extracts RA/DEC for each slit from the science products
+* Produces:
 
-File:
-
-```text
-extract1d_tellcorr_OHref.fits
-```
-
-These spectra are:
-
-* extracted (Step08)
-* telluric-corrected (Step09)
-* wavelength-refined using OH lines (Step10)
+  * `slit_trace_radec_all.csv`
 
 ---
 
-## Processing
+### Step11b — Photometric crossmatch (SkyMapper)
 
-### Step11a — extract RA/DEC
+Script:
+`step11b_query_skymapper.py`
 
-Reads slit metadata from FITS headers and builds:
+* Queries SkyMapper for matched sources
+* Produces:
 
-```text
-slit_trace_RA_match_ALL.csv
-```
-
-Columns include:
-
-* slit ID (`SLIT###`)
-* RA, DEC (degrees)
-* trace geometry (X0, XLO, XHI, YMIN)
+  * `slit_trace_radec_skymapper_all.csv`
 
 ---
 
-### Step11b — query SkyMapper
+### Step11c — First-pass absolute flux calibration
 
-Queries SkyMapper DR4 using slit positions.
+Script:
+`step11c_fluxcal.py`
+
+* Converts extracted spectra into **physical flux-density units**
+* Anchors spectra to SkyMapper photometry (r/i/z bands)
 
 Output:
 
-```text
-slit_trace_RA_match_skymapper_ALL.csv
-```
+* `Extract1D_fluxcal.fits`
 
-Adds:
+Key columns:
 
-* `r_mag`, `i_mag`, `z_mag`
-* `r_err`, `i_err`, `z_err`
-* `match_sep_arcsec` (match distance)
+* `FLUX_FLAM` — flux (erg s⁻¹ cm⁻² Å⁻¹)
+* `VAR_FLAM2` — propagated variance
 
----
-
-### Step11c — flux calibration
-
-For each slit:
-
-#### 1. Throughput correction
-
-```text
-flux → flux / throughput(λ)
-```
-
-Removes instrument + telescope response.
+This step establishes the **absolute photometric scale**.
 
 ---
 
-#### 2. Color-response correction
+### Step11d — Empirical refinement
 
-```text
-flux → flux / color_response(λ)
-```
+Script:
+`step11d_refine_fluxcal.py`
 
-Corrects slope bias introduced by quartz flat-fielding.
+Applies a smooth multiplicative correction:
 
----
+[
+F_{\lambda,\mathrm{refined}} = R_{\mathrm{11d}}(\lambda),F_{\lambda,\mathrm{11c}}
+]
 
-#### 3. Synthetic photometry
+#### Method
 
-Compute band-integrated fluxes:
+* A **quadratic response function** is fit per slit using synthetic photometry
+* Two bandpass modes are supported:
 
-```text
-C_r, C_i, C_z
-```
+**full**
 
-Compare with catalog fluxes:
+* Uses standard r/i/z bandpasses
 
-```text
-F_r, F_i, F_z
-```
+**edge_matched**
 
----
+* Uses truncated bandpasses to reduce edge biases:
 
-#### 4. Calibration fit
+  * r_short: **λ ≥ 600 nm**
+  * i: unchanged
+  * z_short: **λ ≤ 930 nm**
 
-Two modes:
+* Synthetic magnitudes for `r_short` and `z_short` are derived from the full r/i/z photometry
 
-* **GRAY**
+#### Outputs
 
-  ```text
-  FLUX_FLAM = S × flux
-  ```
+* `Extract1D_fluxcal_refined_perstar.fits`
+* `Extract1D_fluxcal_step11d_summary.csv`
+* `Extract1D_fluxcal_step11d_debug.csv`
+* `Extract1D_fluxcal_step11d_metadata.json`
 
-* **TILT**
+Key columns:
 
-  ```text
-  FLUX_FLAM = S × flux × (λ / λ₀)^α
-  ```
-
----
-
-#### 5. Residual diagnostics
-
-```text
-Δm = m_syn − m_cat
-```
-
-Used for QC and validation.
+* `RESP_STEP11D` — multiplicative response
+* `FLUX_FLAM_REFINED` — refined spectrum
 
 ---
 
-## Output
+## Philosophy
 
-Directory:
+* **Step11c** sets the absolute scale
+* **Step11d** applies a smooth broadband correction
 
-```python
-config.ST11_FLUXCAL
-```
+The refinement:
 
-### Main products
-
-```text
-extract1d_fluxcal.fits
-```
-
-Each slit contains:
-
-* `FLUX_FLAM` — calibrated flux
-* `VAR_FLAM2` — calibrated variance
-
-Intermediate columns (if enabled):
-
-* `FLUX_TPUTCOR`
-* `FLUX_COLORCOR`
+* is driven by **integrated band fluxes**
+* corrects large-scale response mismatches (e.g. grating edges)
+* preserves spectral features
+* remains close to unity unless required by photometry
 
 ---
 
-### Summary table
+## Expected behavior
 
-```text
-step11_fluxcal_summary.csv
-```
+* `FLUX_FLAM` and `FLUX_FLAM_REFINED` are similar in scale
+* `RESP_STEP11D` is smooth and positive
+* Typical response variation:
 
-Contains per-slit:
-
-* calibration mode (GRAY/TILT)
-* scale factor `S`
-* slope `alpha`
-* Δm residuals (r/i/z)
-* QC flags
+  * ~0.5–3 across wavelength range
+* Refined spectra reproduce SkyMapper photometry in synthetic band flux
 
 ---
 
-### QA plot
+## Validation
 
-```text
-step11_fluxcal_QA.png
-```
+The Step11d implementation has been validated against a reference single-slit solver:
 
-Shows:
+* `dev/1slittester.py`
 
-* Δm distributions (r, i, z)
-* distribution of scale factors
+This script reproduces the per-slit solution and is used for debugging and verification.
 
 ---
 
-## Key concepts
+## Additional tools
 
-### Photometric anchoring
+### Signal-to-noise estimation
 
-* Spectra are scaled to match broadband photometry
-* Matching is done via **synthetic photometry**, not direct fitting
+Script:
+`step11c_part2_continuum_snr.py`
 
----
+* Computes continuum signal-to-noise per slit
+* Useful for:
 
-### Throughput correction
+  * assessing spectral quality
+  * selecting reliable calibration stars
 
-* Removes instrumental spectral response
-* Based on telescope + instrument + detector
+Often used together with:
 
----
+* `step11c_part3_rank_calibrators.py`
 
-### Color correction
-
-* Corrects continuum slope bias from quartz flat
-* Derived globally across all slits
-
----
-
-### Calibration modes
-
-* **GRAY** → single scale factor
-* **TILT** → scale + spectral slope
-
----
-
-## Pipeline context
-
-```text
-Step08 → 1D extraction
-Step09 → telluric correction
-Step10 → wavelength refinement (OH)
-Step11 → flux calibration
-```
+These tools are diagnostic and not part of the core pipeline execution.
 
 ---
 
 ## Notes
 
-* Broadband photometry defines the **continuum normalization and slope**
-* Spectra are **not forced** to pass exactly through photometric points
-* Residuals (Δm) provide calibration quality diagnostics
-* Not all slits will be calibratable (missing photometry, low S/N)
+* Inputs:
+
+  * Step08 (extraction)
+  * Step10 (telluric correction)
+
+* All scripts are designed to run from the repository root:
+
+```bash
+PYTHONPATH=. python ...
+```
 
 ---
 
-## Design choices
+## Development scripts
 
-* Empirical photometric anchoring instead of standard stars
-* Separation of throughput and color corrections
-* Use of synthetic photometry for consistency
-* Robust handling of missing or poor-quality data
+Reference and experimental tools are stored in:
 
----
+```
+dev/
+```
 
-## Future improvements
-
-* Joint calibration across multiple slits
-* Inclusion of spectrophotometric standard stars
-* Improved filter transmission modeling
-* Per-slit quality weighting in global corrections
-
----
-
-## Summary
-
-Step11 produces final science-ready spectra by combining:
-
-* instrumental corrections
-* photometric anchoring
-* robust calibration diagnostics
-
-The output `extract1d_fluxcal.fits` is the **final product of the pipeline**.
+These are not part of the production pipeline.

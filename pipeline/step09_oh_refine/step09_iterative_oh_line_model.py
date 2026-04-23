@@ -583,32 +583,6 @@ def iterative_bright_faint_model(
     )
 
     # --------------------------------------------------
-    # DEBUG QC: show the 20 brightest initially detected peaks
-    # --------------------------------------------------
-    top20 = bright_peaks[:20]
-    
-    fig = plt.figure(figsize=(12, 4))
-    ax = fig.add_subplot(111)
-    
-    ax.plot(lam, resid0, lw=0.8, color="k", label="MASTER residual")
-    
-    for pk in top20:
-        ypk = np.interp(pk.lam_peak, lam, resid0)
-        ax.plot(pk.lam_peak, ypk, marker="*", ms=12, color="red")
-    
-    ax.set_title(f"Top 20 brightest detected peaks - initial bright pass")
-    ax.set_xlabel("Wavelength (nm)")
-    ax.set_ylabel("Residual")
-    ax.set_ylim(*robust_ylim(resid0, q=(0.5, 99.5)))
-    ax.legend(fontsize=8)
-    
-    dbg_png = Path(f"debug_top20_peaks_{slit}.png")
-    fig.tight_layout()
-    fig.savefig(dbg_png, dpi=150)
-    plt.close(fig)
-    
-    print("DEBUG TOP20 PNG =", dbg_png)
-    print("TOP20 PEAKS =", [round(pk.lam_peak, 3) for pk in top20])
 
 
     # bright pass ranked by pure peak height
@@ -891,7 +865,7 @@ def main():
             lam_full = read_fits_table_column(tab, "LAMBDA_NM")
             flux_full = read_fits_table_column(tab, args.source_col)
             cont_full = read_fits_table_column(tab, args.continuum_col)
-            
+            """
             m = np.isfinite(lam_full) & np.isfinite(flux_full) & np.isfinite(cont_full)
             if m.sum() < 10:
                 raise ValueError(
@@ -902,6 +876,14 @@ def main():
             lam = lam_full[m]
             flux = flux_full[m]
             cont = cont_full[m]
+            """
+            m_lam = np.isfinite(lam_full)
+            lam = lam_full[m_lam]
+            flux = flux_full[m_lam]
+            cont = cont_full[m_lam]
+            m_fit = np.isfinite(lam) & np.isfinite(flux) & np.isfinite(cont)
+            
+            
             
             order = np.argsort(lam)
             lam = lam[order]
@@ -931,9 +913,9 @@ def main():
             stellar_full = np.full_like(lam_full, np.nan, dtype=float)
             resid_full = np.full_like(lam_full, np.nan, dtype=float)
             
-            oh_full[m] = oh_uns
-            stellar_full[m] = stellar_uns
-            resid_full[m] = resid_uns
+            oh_full[m_lam] = oh_uns
+            stellar_full[m_lam] = stellar_uns
+            resid_full[m_lam] = resid_uns
 
             new_hdu = add_or_replace_column(hdu, args.oh_col_name, oh_full)
             new_hdu = add_or_replace_column(new_hdu, args.stellar_col_name, stellar_full)
@@ -941,7 +923,7 @@ def main():
 
             out_hdus.append(new_hdu)
             
-            print(name, "finite rows for OH =", m.sum(), "/", len(m))
+            print(name, "finite rows for OH =", m_lam.sum(), "/", len(m_lam))
             print(name, "resid_pre finite   =", np.isfinite(resid_pre).sum(), "/", len(resid_pre))
 
         args.out_fits.parent.mkdir(parents=True, exist_ok=True)

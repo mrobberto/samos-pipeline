@@ -517,13 +517,17 @@ def main():
             # --- read and sanitize like the working path ---
             lam_full = read_fits_table_column(tab, "LAMBDA_NM")
             y_full = read_fits_table_column(tab, args.source_col)
-
+            """
             m = np.isfinite(lam_full) & np.isfinite(y_full)
             if m.sum() < 10:
                 raise ValueError(f"{name}: not enough finite points in LAMBDA_NM / {args.source_col}")
 
             lam = lam_full[m]
             y = y_full[m]
+            """
+            m_lam = np.isfinite(lam_full)
+            lam = lam_full[m_lam]
+            y = y_full[m_lam]
 
             # mimic read_fits_slit behavior as closely as possible
             order = np.argsort(lam)
@@ -607,14 +611,14 @@ def main():
             cont_final_full = np.full_like(lam_full, np.nan, dtype=float)
             resid_final_full = np.full_like(lam_full, np.nan, dtype=float)
 
-            cont1_full[m] = cont1_corr_uns
-            resid1_full[m] = resid1_corr_uns
-            line1_full[m] = line1_uns
-            y_clean1_full[m] = y_clean1_uns
-            cont2_full[m] = cont2_uns
-            resid2_full[m] = resid2_uns
-            cont_final_full[m] = cont_final_uns
-            resid_final_full[m] = resid_final_uns
+            cont1_full[m_lam] = cont1_corr_uns
+            resid1_full[m_lam] = resid1_corr_uns
+            line1_full[m_lam] = line1_uns
+            y_clean1_full[m_lam] = y_clean1_uns
+            cont2_full[m_lam] = cont2_uns
+            resid2_full[m_lam] = resid2_uns
+            cont_final_full[m_lam] = cont_final_uns
+            resid_final_full[m_lam] = resid_final_uns
 
             print(name, "input finite      =", np.isfinite(y_full).sum(), "/", len(y_full))
             print(name, "CONT1 corr finite =", np.isfinite(cont1_full).sum(), "/", len(cont1_full))
