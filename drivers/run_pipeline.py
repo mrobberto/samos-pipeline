@@ -50,7 +50,6 @@ import sys
 import time
 from typing import Iterable, Sequence
 
-
 @dataclass(frozen=True)
 class Stage:
     """One pipeline stage entry used by the master driver registry."""
@@ -102,7 +101,10 @@ SCRIPT_REGISTRY: tuple[Stage, ...] = (
     Stage("10b",  "pipeline/step10_telluric/step10b_apply_telluric.py",             "Apply O2 telluric correction"),
     Stage("11a",  "pipeline/step11_fluxcal/step11a_extract_header_radec_resilient.py", "Extract RA/DEC and slit metadata"),
     Stage("11b",  "pipeline/step11_fluxcal/step11b_query_skymapper.py",             "Query SkyMapper photometry"),
-    Stage("11c",  "pipeline/step11_fluxcal/step11c_fluxcal_b.py",                   "Apply photometric flux calibration"),
+    Stage("11c",  "pipeline/step11_fluxcal/step11c_fluxcal.py",                   "Apply photometric flux calibration"),
+    Stage("12a", "pipeline/step12_finalcal/step12a_build_illum_profile.py",         "Build 1D illumination profiles"),
+    Stage("12b", "pipeline/step12_finalcal/step12b_apply_illum_profile.py",         "Apply 1D illumination correction"),
+    Stage("12c", "pipeline/step12_finalcal/step12c_refine_fluxcal.py",              "Refine flux calibration against SkyMapper photometry"),
 )
 
 # -----------------------------------------------------------------------------
@@ -122,10 +124,7 @@ QC_REGISTRY: dict[str, tuple[str, ...]] = {
     "07h": ("qc/step07/qc07h_arc_wavelength_products.py",),
     "08a": ("qc/step08/qc_step08_extract.py",),
     "08c": ("qc/step08/qc_step08c_wavelength_alignment.py",),
-    "09":  (
-        "qc/step09/qc_step09_preferred_all_slits.py",
-        "qc/step09/qc_step09_final_mosaic.py",
-    ),
+    "09":  ("qc/step09/qc_step09_preferred_all_slits.py", "qc/step09/qc_step09_final_mosaic.py"),
     "10b": ("qc/step10/qc_step10_final_mosaic.py",),
     "11c": ("qc/step11/qc_step11_grid_patched_v2.py", "qc/step11/qc_step11_summary_b.py"),
 }
@@ -148,6 +147,9 @@ OUTPUT_CHECKS: dict[str, tuple[str, ...]] = {
     "10a": ("TELLURIC_TEMPLATE",),
     "10b": ("EXTRACT1D_TELLCOR",),
     "11c": ("EXTRACT1D_FLUXCAL", "FLUXCAL_SUMMARY_CSV"),
+    "12a": ("ILLUM1D_PROFILE_EVEN", "ILLUM1D_PROFILE_ODD"),
+    "12b": ("EXTRACT1D_ILLUMCORR",),
+    "12c": ("EXTRACT1D_FINALCAL", "STEP12C_SUMMARY_CSV"),
 }
 
 
@@ -205,8 +207,8 @@ def format_stage_args(stage: Stage, set_name: str | None, args: argparse.Namespa
         # Step09 is now a single ABAB OH-clean stage.
         # It consumes the Step08 wavelength-attached extraction and writes into
         # the canonical Step09 ABAB directory defined by the active config.
-        infile = str(getattr(cfg_module, "EXTRACT1D_WAV", ""))
-        outdir = str(getattr(cfg_module, "ST09_ABAB", ""))
+        infile = str(cfg_module.EXTRACT1D_WAV)
+        outdir = str(cfg_module.ST09)
     
         vals: list[str] = []
         if infile:
@@ -219,8 +221,8 @@ def format_stage_args(stage: Stage, set_name: str | None, args: argparse.Namespa
         vals: list[str] = []
         infile = (
             args.step11a_infile
-            or str(getattr(cfg_module, "EXTRACT1D_TELLCOR", ""))
-            or str(getattr(cfg_module, "STEP11_INPUT_SPECTRA", ""))
+            or str(cfg_module.EXTRACT1D_TELLCOR)
+            or str(cfg_module.STEP11_INPUT_SPECTRA)
         )
         outcsv = (
             args.step11a_outcsv
@@ -273,6 +275,16 @@ def format_stage_args(stage: Stage, set_name: str | None, args: argparse.Namespa
         if phot:
             vals.append(phot)
         return vals
+    
+    if stage.key == "12c":
+        return [
+            "--id-col", "slit",
+            "--r-col", "r_mag",
+            "--i-col", "i_mag",
+            "--z-col", "z_mag",
+            "--mode", "perstar",
+            "--bandpass-mode", "edge_matched",
+        ]
 
     if not stage.args_template:
         return []
@@ -373,9 +385,9 @@ def validate_stage_outputs(stage_key: str, cfg_module, selected_sets: tuple[str,
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Run the SAMOS pipeline sequentially.")
     ap.add_argument("--repo-root", type=str, default=str(Path(__file__).resolve().parents[1]))
-    ap.add_argument("--config", type=str, default="config.reductions.run8_dolidze25")
+    ap.add_argument("--config", type=str, default="config.target_config")
     ap.add_argument("--from-step", type=str, default="04")
-    ap.add_argument("--to-step", type=str, default="11c")
+    ap.add_argument("--to-step", type=str, default="12c")
     ap.add_argument("--only", nargs="*", default=None)
     ap.add_argument("--set", type=str, default="ALL")
     ap.add_argument("--run-qc", action="store_true")
@@ -390,16 +402,25 @@ def parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
-def main() -> int:
+def main() -> int:    
     args = parse_args()
     repo_root = Path(args.repo_root).expanduser().resolve()
+    cfg_module = import_target_config(args.config)
+
+
+    print("=== SAMOS CONFIG ===")
+    print("TARGET:", cfg_module.TARGET_NAME)
+    print("NIGHT :", cfg_module.NIGHT_ID)
+    print("SCI   :", len(cfg_module.SCIENCE_FILES))
+    print("ARC   :", len(cfg_module.ARC_FILES))
+    print("QUARTZ:", len(cfg_module.QUARTZ_FILES))
+    print("ROOT  :", cfg_module.REDUCED_DIR)  
     print(f"[INFO] repo_root = {repo_root}")
     print(f"[INFO] config    = {args.config}")
 
     if not repo_root.exists():
         raise FileNotFoundError(repo_root)
 
-    cfg_module = import_target_config(args.config)
     selected_sets = normalize_sets(args.set)
     stages = expand_requested_stages(args.from_step, args.to_step, args.only)
 
@@ -476,14 +497,14 @@ def main() -> int:
                     
                     # --- Step09 closeout QC ---
                     if qc_str.endswith("qc/step09/qc_step09_preferred_all_slits.py"):
-                        root = getattr(cfg_module, "ST09_ABAB")
+                        root = cfg_module.ST09
                         qc_args = [
                             "--root", str(root),
                             "--out-pdf", str(Path(root) / "qc_step09_preferred_all_slits.pdf"),
                         ]
                     
                     elif qc_str.endswith("qc/step09/qc_step09_final_mosaic.py"):
-                        root = getattr(cfg_module, "ST09_ABAB")
+                        root = cfg_module.ST09
                         qc_args = [
                             "--infile", str(cfg_module.EXTRACT1D_OHCLEAN),
                             "--outdir", str(Path(root) / "qc_step09"),
@@ -559,6 +580,12 @@ def main() -> int:
     dt = time.time() - t0
     print("\n=== Pipeline run complete ===")
     print(f"Elapsed time: {dt:.1f} s")
+    print("Active SAMOS reduction:")
+    print("  TARGET_NAME =", cfg_module.TARGET_NAME)
+    print("  NIGHT_ID    =", cfg_module.NIGHT_ID)
+    print("  RUN_ROOT    =", cfg_module.RUN_ROOT)
+    print("  REDUCED_DIR =", cfg_module.REDUCED_DIR)
+
     if failures:
         print("Failures:")
         for f in failures:
