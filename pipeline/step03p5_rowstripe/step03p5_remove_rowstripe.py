@@ -106,20 +106,25 @@ logger = logging.getLogger(Path(__file__).stem)
 # User-tunable parameters
 # ---------------------------------------------------------------------
 # signal-free sidebands used to measure background / striping
-X_LEFT_MAX = 1300
-X_RIGHT_MIN = 2800
+#X_LEFT_MAX = 1300
+#X_RIGHT_MIN = 2800
+X_LEFT_MAX = int(config.ROWSTRIPE_X_LEFT_MAX)
+X_RIGHT_MIN = int(config.ROWSTRIPE_X_RIGHT_MIN)
 
 # Y split between upper/lower detector halves
-Y_SPLIT = 2056
+#Y_SPLIT = 2056
+Y_SPLIT = int(config.ROWSTRIPE_Y_SPLIT)
 
 # robust estimator per row:
 # "median" is safest; "mean" is slightly more aggressive
 ROW_ESTIMATOR = "median"
+#ROW_ESTIMATOR = str(config.ROWSTRIPE_ESTIMATOR)
 
 # optional smoothing of the row-offset vector
-SMOOTH_OFFSETS = False
-SMOOTH_WIN = 21   # odd integer if smoothing enabled
-
+#SMOOTH_OFFSETS = False
+#SMOOTH_WIN = 21   # odd integer if smoothing enabled
+SMOOTH_OFFSETS = bool(config.ROWSTRIPE_SMOOTH_OFFSETS)
+SMOOTH_WIN = int(config.ROWSTRIPE_SMOOTH_WIN)
 
 def smooth_1d(x: np.ndarray, win: int) -> np.ndarray:
     win = max(3, int(win) | 1)

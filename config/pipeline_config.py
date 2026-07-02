@@ -46,6 +46,16 @@ THROUGHPUT_TABLE = THROUGHPUT_DIR / "throughput_total_SAMOS_SOAR_CCD.csv"
 # -----------------------------------------------------------------------------
 NAME_MASTER_BIAS = "MasterBias.fits"
 
+# -----------------------------------------------------------------------------
+# Step03.5 row-stripe / quadrant-pedestal correction defaults
+# -----------------------------------------------------------------------------
+ROWSTRIPE_X_LEFT_MAX = 1300
+ROWSTRIPE_X_RIGHT_MIN = 2800
+ROWSTRIPE_Y_SPLIT = 2056
+ROWSTRIPE_ESTIMATOR = "median"
+ROWSTRIPE_SMOOTH_OFFSETS = False
+ROWSTRIPE_SMOOTH_WIN = 21
+
 # Step04: traces and slit geometry
 NAME_EVEN_TRACES_GEOM = "Even_traces_geometry.fits"
 NAME_ODD_TRACES_GEOM = "Odd_traces_geometry.fits"
