@@ -1,62 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-SAMOS master pipeline driver.
+"""SAMOS/SAMI master pipeline driver.
 
-PURPOSE
--------
-Run the SAMOS reduction pipeline in canonical stage order using the active
-target configuration module. The driver launches existing step scripts as
-subprocesses and does not re-implement the science logic of the pipeline.
-
-DESIGN PRINCIPLES
------------------
-- Keep the driver lightweight and easy to maintain.
-- Use config-driven canonical products and directories.
-- Treat the script registry below as the authoritative execution order.
-- Keep stage semantics explicit:
-    Step09 = ABAB OH-clean stage
-    Step10 = telluric correction
-    Step11 = photometric flux calibration
-- Allow partial execution with --from-step / --to-step / --only.
-- Allow parity-restricted runs for set-based stages.
-- Optionally run registered QC companions after each stage.
-
-MAINTENANCE NOTES
------------------
-- Update SCRIPT_REGISTRY when the operational stage structure changes.
-- Update QC_REGISTRY when the preferred QC scripts change.
-- Update OUTPUT_CHECKS whenever a stage's canonical output contract changes.
-- The driver should prefer canonical config variables such as:
-    EXTRACT1D_WAV
-    EXTRACT1D_OHCLEAN
-    EXTRACT1D_TELLCOR
-    STEP11_RADEC
-    STEP11_PHOTCAT
-    EXTRACT1D_FLUXCAL
-- Avoid adding target-specific filesystem logic here; that belongs in the
-  active target configuration profile.
-  
-To run: 
-    a) Smoketest
-PYTHONPATH=. python drivers/run_pipeline.py \
-  --from-step 04 \
-  --to-step 12e \
-  --dry-run \
-  --verbose
-  
-  b) Full run
-PYTHONPATH=. python drivers/run_pipeline.py \
-  --from-step 04 \
-  --to-step 12e \
-  --run-qc \
-  --verbose
-  
+Run the spectroscopic reduction pipeline in canonical stage order using the
+active target configuration module. The executable driver contains orchestration
+logic only; stage order, QC registration, output contracts, and argument
+construction are kept in companion modules under drivers/.
 """
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import importlib
 from pathlib import Path
 import os
@@ -66,120 +19,9 @@ import sys
 import time
 from typing import Iterable, Sequence
 
-@dataclass(frozen=True)
-class Stage:
-    """One pipeline stage entry used by the master driver registry."""
-    key: str
-    script: str
-    description: str
-    sets: tuple[str, ...] = ()
-    args_template: str = ""
-
-    @property
-    def is_set_based(self) -> bool:
-        return len(self.sets) > 0
-    
-
-# -----------------------------------------------------------------------------
-# Stage registry
-# -----------------------------------------------------------------------------
-# The order here is the authoritative pipeline execution order.
-#
-# IMPORTANT:
-# - Step09 is a single ABAB OH-clean stage.
-# - The historical 09a/09b/09bm/09c subdivision is no longer operational.
-# - Step11c should point to the currently adopted production script.
-# -----------------------------------------------------------------------------
-SCRIPT_REGISTRY: tuple[Stage, ...] = (
-    Stage("00",   "pipeline/step00_orient/step00_rotate.py",                        "Rotate frames to the standard orientation"),
-    Stage("01",   "pipeline/step01_bias/step01_masterbias.py",                      "Build master bias"),
-    Stage("02",   "pipeline/step02_biascorr/step02_biascorr.py",                    "Apply bias correction"),
-    Stage("03",   "pipeline/step03_crclean/step03_crclean.py",                      "Cosmic-ray cleaning"),
-    Stage("03.5", "pipeline/step03p5_rowstripe/step03p5_remove_rowstripe.py",       "Remove row-wise striping and match quadrant pedestals"),
-    Stage("04",   "pipeline/step04_traces/step04_make_traces.py",                   "Build slit traces and geometry",                  sets=("EVEN", "ODD"), args_template="--set {set}"),
-    Stage("05",   "pipeline/step05_pixflat/step05_build_pixflat.py",                "Build pixel flat from quartz differences",        sets=("EVEN", "ODD"), args_template="--set {set}"),
-    Stage("06a",  "pipeline/step06_science_rectify/step06a_make_final_science.py",  "Build FinalScience mosaic"),
-    Stage("06b",  "pipeline/step06_science_rectify/step06b_apply_pixflat_clip.py",  "Apply pixel flat to FinalScience",                sets=("EVEN", "ODD"), args_template="--traceset {set}"),
-    Stage("06c",  "pipeline/step06_science_rectify/step06c_TRACECOORDS_representation.py", "Rectify slitlets into TRACECOORDS",        sets=("EVEN", "ODD"), args_template="--traceset {set}"),
-    Stage("07a",  "pipeline/step07_wavecal/step07a_make_arc_diff.py",               "Build arc-difference frame"),
-    Stage("07b",  "pipeline/step07_wavecal/step07b_apply_pixflat_arc.py",           "Apply pixel flat to arc frame"),
-    Stage("07c",  "pipeline/step07_wavecal/step07c_extract_arc_1d.py",              "Extract rectified 1D arc slit spectra",           sets=("EVEN", "ODD"), args_template="--traceset {set}"),
-    Stage("07d",  "pipeline/step07_wavecal/step07d_find_line_shifts.py",            "Measure initial relative arc shifts",             sets=("EVEN", "ODD"), args_template="--traceset {set}"),
-    Stage("07e",  "pipeline/step07_wavecal/step07e_refine_stack_arc.py",            "Refine arc-stack alignment",                      sets=("EVEN", "ODD"), args_template="--set {set}"),
-    Stage("07f",  "pipeline/step07_wavecal/step07f_build_master_arc.py",            "Build aligned master arc"),
-    Stage("07g",  "pipeline/step07_wavecal/step07g_solve_wavelength.py",            "Fit global wavelength solution"),
-    Stage("07h",  "pipeline/step07_wavecal/step07h_propagate_wavesol.py",           "Propagate wavelength solution to all slit arcs"),
-    Stage("07i",   "pipeline/step07_wavecal/step07i_apply_manual_waveshifts.py",    "Apply optional manual slit wavelength zero-point shifts" ),
-    Stage("08a1", "pipeline/step08_extract1d/step08a1_trace_analysis.py",
-          "Trace analysis, ridge detection, and slit classification",
-          sets=("EVEN", "ODD"), args_template="--set {set}"),
-    
-    Stage("08a2", "pipeline/step08_extract1d/step08a2_extract_1d.py",
-          "Ridge-guided optimal extraction",
-          sets=("EVEN", "ODD"), args_template="--set {set}"),
-    Stage("08b",  "pipeline/step08_extract1d/step08b_merge_even_odd.py",            "Merge EVEN and ODD extracted spectra"),
-    Stage("08c",  "pipeline/step08_extract1d/step08c_attach_wavelength.py",         "Attach wavelength vectors to extracted spectra"),
-    Stage("09",   "pipeline/step09_oh_refine/step09_abab_driver.py",                "Full OH cleanup and preferred-spectrum selection (A/B/A/B)"),
-    Stage("10a",  "pipeline/step10_telluric/step10a_build_telluric_template.py",    "Build empirical O2 telluric template"),
-    Stage("10b",  "pipeline/step10_telluric/step10b_apply_telluric.py",             "Apply O2 telluric correction"),
-    Stage("11a",  "pipeline/step11_fluxcal/step11a_extract_header_radec_resilient.py", "Extract RA/DEC and slit metadata"),
-    Stage("11b",  "pipeline/step11_fluxcal/step11b_query_skymapper.py",             "Query SkyMapper photometry"),
-    Stage("11c",  "pipeline/step11_fluxcal/step11c_fluxcal.py",                     "Apply photometric flux calibration"),
-#    Stage("12a", "pipeline/step12_finalcal/step12a_build_illum_profile.py",         "Build 1D illumination profiles"),
-#    Stage("12b", "pipeline/step12_finalcal/step12b_apply_illum_profile.py",         "Apply 1D illumination correction"),
-#
-    Stage("12d", "pipeline/step12_finalcal/step12d_build_stellar_response.py",      "Build ensemble stellar-response correction"),
-    Stage("12e", "pipeline/step12_finalcal/step12e_apply_stellar_response.py",      "Apply ensemble stellar-response correction"),
-)
-
-# -----------------------------------------------------------------------------
-# QC registry
-# -----------------------------------------------------------------------------
-# These are the preferred QC companions for the current operational pipeline.
-# Keep this list aligned with the canonical QC scripts actually used in the
-# notebooks and science validation workflow.
-# -----------------------------------------------------------------------------   
-QC_REGISTRY: dict[str, tuple[str, ...]] = {
-    "04":  ("qc/step04/qc_step04_trace_quicklooks.py",),
-    "05":  ("qc/step05/qc_step05_pixflat.py",),
-    "06a": ("qc/step06/qc_step06a_mosaic_final.py",),
-    "06b": ("qc/step06/qc_step06b_inspector_final.py",),
-    "06c": ("qc/step06/qc_step06c_quicklooks_final.py",),
-    "07g": ("qc/step07/qc07g_inspect_wavelength_solution.py",),
-    "07h": ("qc/step07/qc07h_arc_wavelength_products.py",),
-    "08a": ("qc/step08/qc_step08_extract.py",),
-    "08c": ("qc/step08/qc_step08c_wavelength_alignment.py",),
-    "09":  ("qc/step09/qc_step09_preferred_all_slits.py", "qc/step09/qc_step09_final_mosaic.py"),
-    "10b": ("qc/step10/qc_step10_final_mosaic.py",),
-    "11c": ("qc/step11/qc_step11_grid_patched_v2.py", "qc/step11/qc_step11_summary_b.py"),
-}
-
-# -----------------------------------------------------------------------------
-# Output contract checks
-# -----------------------------------------------------------------------------
-# These are lightweight post-stage assertions using canonical variables from the
-# active target config. They are intended to catch broken file flow early.
-# -----------------------------------------------------------------------------
-OUTPUT_CHECKS: dict[str, tuple[str, ...]] = {
-    "06c": ("SCI_EVEN_TRACECOORDS", "SCI_ODD_TRACECOORDS"),
-    "07a": ("MASTER_ARC_DIFF",),
-    "07g": ("WAVESOL_ALL_FITS",),
-    "07h": ("ARC_1D_WAVELENGTH_ALL",),
-    "07i": ("ARC_WAVELENGTH_ACTIVE",),
-    "08a2": ("EXTRACT1D_EVEN", "EXTRACT1D_ODD"),
-    "08b": ("EXTRACT1D_ALL",),
-    "08c": ("EXTRACT1D_WAV",),
-    "09":  ("EXTRACT1D_OHCLEAN",),
-    "10a": ("TELLURIC_TEMPLATE",),
-    "10b": ("EXTRACT1D_TELLCOR",),
-    "11c": ("EXTRACT1D_FLUXCAL", "FLUXCAL_SUMMARY_CSV"),
-#    "12a": ("ILLUM1D_PROFILE_EVEN", "ILLUM1D_PROFILE_ODD"),
-#    "12b": ("EXTRACT1D_ILLUMCORR",),
-#    "12c": ("EXTRACT1D_FINALCAL", "STEP12C_SUMMARY_CSV"),
-    "12d": ("STEP12D_MASTER_FITS", "STEP12D_SUMMARY_CSV"),
-    "12e": ("QC_STEP12D_RESPONSE_PDF",),
-}
-
+from drivers.registry import QC_REGISTRY, OUTPUT_CHECKS, SCRIPT_REGISTRY, Stage
+from drivers.stage_args import format_stage_args
+from drivers.qc_args import format_qc_args
 
 def stage_index(stage_key: str) -> int:
     keys = [s.key for s in SCRIPT_REGISTRY]
@@ -211,114 +53,6 @@ def normalize_sets(user_set: str) -> tuple[str, ...]:
     if tag not in {"EVEN", "ODD"}:
         raise ValueError("--set must be EVEN, ODD, or ALL")
     return (tag,)
-
-
-def _pick_first_existing(*vals):
-    for v in vals:
-        if not v:
-            continue
-        p = Path(v)
-        if p.exists():
-            return str(p)
-    return ""
-
-# -----------------------------------------------------------------------------
-# Per-stage argument formatting
-# -----------------------------------------------------------------------------
-# Most stages use static args_template values from SCRIPT_REGISTRY.
-# Stages with config-driven inputs/outputs or backward-compatible overrides are
-# handled explicitly here.
-# -----------------------------------------------------------------------------
-def format_stage_args(stage: Stage, set_name: str | None, args: argparse.Namespace, cfg_module) -> list[str]:
-
-    if stage.key == "09":
-        # Step09 is now a single ABAB OH-clean stage.
-        # It consumes the Step08 wavelength-attached extraction and writes into
-        # the canonical Step09 ABAB directory defined by the active config.
-        infile = str(cfg_module.EXTRACT1D_WAV)
-        outdir = str(cfg_module.ST09)
-    
-        vals: list[str] = []
-        if infile:
-            vals.extend(["--in-fits", infile])
-        if outdir:
-            vals.extend(["--outdir", outdir])
-        return vals
-    
-    if stage.key == "11a":
-        vals: list[str] = []
-        infile = (
-            args.step11a_infile
-            or str(cfg_module.EXTRACT1D_TELLCOR)
-            or str(cfg_module.STEP11_INPUT_SPECTRA)
-        )
-        outcsv = (
-            args.step11a_outcsv
-            or str(getattr(cfg_module, "STEP11_RADEC", ""))
-            or str(Path(getattr(cfg_module, "ST11_FLUXCAL")) / "slit_trace_radec_all.csv")
-        )
-        if not infile:
-            raise ValueError("Step11a requires a config EXTRACT1D_TELLCOR/STEP11_INPUT_SPECTRA or --step11a-infile")
-        vals.extend(["--infile", infile, "--out", outcsv])
-
-        even_geom = (
-            getattr(cfg_module, "EVEN_TRACES_GEOM", None)
-            or getattr(cfg_module, "EVEN_TRACE_GEOM", None)
-            or getattr(cfg_module, "EVEN_TRACES_GEOMETRY", None)
-        )
-        odd_geom = (
-            getattr(cfg_module, "ODD_TRACES_GEOM", None)
-            or getattr(cfg_module, "ODD_TRACE_GEOM", None)
-            or getattr(cfg_module, "ODD_TRACES_GEOMETRY", None)
-        )
-        if even_geom:
-            vals.extend(["--even-geom", str(even_geom)])
-        if odd_geom:
-            vals.extend(["--odd-geom", str(odd_geom)])
-        return vals
-
-    if stage.key == "11c":
-        # Keep override support, but default to config-driven discovery if available.
-        extract = (
-            args.step11c_extract
-            or str(getattr(cfg_module, "STEP11_INPUT_SPECTRA", ""))
-            or str(getattr(cfg_module, "EXTRACT1D_TELLCOR", ""))
-        )
-        phot = (
-            args.step11c_photcsv
-            or str(getattr(cfg_module, "STEP11_PHOTCAT", ""))
-            or str(getattr(cfg_module, "SKYMAPPER_CSV", ""))
-            or str(getattr(cfg_module, "PHOTCSV", ""))
-            or _pick_first_existing(
-                Path(getattr(cfg_module, "ST11_FLUXCAL", "")) / "slit_trace_radec_skymapper_all.csv",
-                Path(getattr(cfg_module, "ST11_FLUXCAL", "")) / "skymapper_photometry.csv",
-                Path(getattr(cfg_module, "ST11_FLUXCAL", "")) / "skymapper.csv",
-                Path(getattr(cfg_module, "ST11_FLUXCAL", "")) / "step11b_skymapper.csv",
-            )
-        )
-        
-        vals: list[str] = []
-        if extract:
-            vals.append(extract)
-        if phot:
-            vals.append(phot)
-        return vals
-    
-    if stage.key == "12c":
-        return [
-            "--id-col", "slit",
-            "--r-col", "r_mag",
-            "--i-col", "i_mag",
-            "--z-col", "z_mag",
-            "--mode", "perstar",
-            "--bandpass-mode", "edge_matched",
-        ]
-
-    if not stage.args_template:
-        return []
-    s = stage.args_template.format(set=set_name) if set_name else stage.args_template
-    return shlex.split(s)
-
 
 def resolve_script(repo_root: Path, rel_path: str) -> Path:
     path = repo_root / rel_path
@@ -445,6 +179,8 @@ def main() -> int:
     print("ROOT  :", cfg_module.REDUCED_DIR)  
     print(f"[INFO] repo_root = {repo_root}")
     print(f"[INFO] config    = {args.config}")
+    if args.dry_run:
+        print("[DRY-RUN] Commands will be printed but not executed.")
 
     if not repo_root.exists():
         raise FileNotFoundError(repo_root)
@@ -462,7 +198,8 @@ def main() -> int:
         for stage_obj, set_name in iter_stage_runs(stage, selected_sets):
             t_stage = time.time()
             label = f"{stage_obj.key}:{set_name}" if set_name else stage_obj.key
-            print(f"\n=== Running {label} — {stage_obj.description} ===")
+            verb = "Would run" if args.dry_run else "Running"
+            print(f"\n=== {verb} {label} — {stage_obj.description} ===")
 
             try:
                 script_path = resolve_script(repo_root, stage_obj.script)
@@ -490,7 +227,10 @@ def main() -> int:
                     return rc
                 continue
 
-            print(f"[OK] {label} ({time.time() - t_stage:.1f}s)")
+            if args.dry_run:
+                print(f"[DRY-RUN] {label} command not executed")
+            else:
+                print(f"[OK] {label} ({time.time() - t_stage:.1f}s)")
 
             last_set_for_stage = (
                 (not stage_obj.is_set_based)
@@ -517,70 +257,8 @@ def main() -> int:
                         print(f"[SKIP QC] {exc}")
                         continue
             
-                    # ----------------------------
-                    # Build QC arguments
-                    # ----------------------------
-                    qc_args: list[str] = []
-                    qc_str = str(qc_path)
-                    
-                    # --- Step09 closeout QC ---
-                    if qc_str.endswith("qc/step09/qc_step09_preferred_all_slits.py"):
-                        root = cfg_module.ST09
-                        qc_args = [
-                            "--root", str(root),
-                            "--out-pdf", str(Path(root) / "qc_step09_preferred_all_slits.pdf"),
-                        ]
-                    
-                    elif qc_str.endswith("qc/step09/qc_step09_final_mosaic.py"):
-                        root = cfg_module.ST09
-                        qc_args = [
-                            "--in", str(cfg_module.EXTRACT1D_OHCLEAN),
-                            "--outdir", str(Path(root) / "qc_step09"),
-                            "--column", "STELLAR",
-                            "--show-pref",
-                        ]
-                                            
-                    # --- Step10 closeout QC ---
-                    elif qc_str.endswith("qc/step10/qc_step10_final_mosaic.py"):
-                        qc_args = [
-                            "--in", str(cfg_module.EXTRACT1D_TELLCOR),
-                            "--outdir", str(Path(cfg_module.ST10_TELLURIC) / "qc_step10"),
-                            "--column", "FLUX_TELLCOR_O2",
-                        ]
-                    
-                    # --- Step11 summary QC ---
-                    elif qc_str.endswith("qc/step11/qc_step11_summary_b.py"):
-                        qc_args = [
-                            "--extract", str(cfg_module.EXTRACT1D_FLUXCAL),
-                            "--photcat", str(cfg_module.STEP11_PHOTCAT),
-                            "--tracecoords", f"{cfg_module.SCI_EVEN_TRACECOORDS}|{cfg_module.SCI_ODD_TRACECOORDS}",
-                            "--image", str(
-                                getattr(
-                                    cfg_module,
-                                    "SISI_IMAGE_FITS",
-                                    repo_root / "calibration" / "sisi" / "Coadd_i_median_078-082_ff_flipx_wcs_manual.fits"
-                                )
-                            ),
-                            "--outpdf", str(Path(cfg_module.ST11_FLUXCAL) / "qc_step11" / "qc_step11_summary_pages.pdf"),
-                        ]
-                    
-                    # --- Step11 grid QC ---
-                    # Grid QC auto-discovers its inputs from config/defaults.
-                    elif qc_str.endswith("qc/step11/qc_step11_grid_patched_v2.py"):
-                        qc_args = []
-                    
-                    # --- Generic fallback for set-based QC ---
-                    elif set_name is not None:
-                        if (
-                            qc_str.endswith("qc/step04/qc_step04_trace_quicklooks.py")
-                            or qc_str.endswith("qc/step06/qc_step06b_inspector_final.py")
-                            or qc_str.endswith("qc/step06/qc_step06c_quicklooks_final.py")
-                        ):
-                            qc_args = ["--traceset", set_name]
-                        else:
-                            qc_args = ["--set", set_name]
-        
-            
+                    qc_args = format_qc_args(qc_path, set_name, cfg_module, repo_root)
+
                     # ----------------------------
                     # Build and run QC command
                     # ----------------------------
@@ -604,7 +282,10 @@ def main() -> int:
                             print(f"\nStopped after QC failure. Elapsed: {dt:.1f} s")
                             return qrc
                     else:
-                        print(f"[OK] {qlabel}")
+                        if args.dry_run:
+                            print(f"[DRY-RUN] {qlabel} command not executed")
+                        else:
+                            print(f"[OK] {qlabel}")
 
         if failures and not args.keep_going:
             break
