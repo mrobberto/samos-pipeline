@@ -27,3 +27,22 @@ outdir/
 # Temporary/editor files
 *~
 *.bak
+
+# Local scratch notebooks/files
+Untitled*.ipynb
+filelist
+QuickGuide.txt
+*_RADEC.csv
+
+# Local duplicate/conflict files
+*robberto@stsci.edu*
+* copy.py
+* 2.py
+pipeline/step09_oh_refine/list
+
+# Local/archive material not part of active source
+notebooks/legacy/
+config/legacy/
+drivers/archive/
+pipeline/archive/
+qc/archive/
