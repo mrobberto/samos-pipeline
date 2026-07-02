@@ -1,20 +1,29 @@
+# macOS
+.DS_Store
+
 # Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
 
 # Jupyter
 .ipynb_checkpoints/
+.virtual_documents/
 
-# OS
-.DS_Store
-
-# Large data / reductions
-_Run8_Science_*/
+# Local products and generated outputs
+products/
+outdir/
 *.fits
-*.csv
-*.png
+*.fit
+*.fz
 *.pdf
+*.png
+*.jpg
+*.jpeg
 
-# Temporary / analysis
-Untitled.ipynb
+# Local archives / large bundles
+*.zip
+
+# Temporary/editor files
+*~
+*.bak

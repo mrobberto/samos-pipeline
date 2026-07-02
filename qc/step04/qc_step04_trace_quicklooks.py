@@ -95,11 +95,11 @@ def pick_files(traceset):
         st04 / f"{base}_slitid.fits",
     ])
     quartz = first_existing([
+        st04 / f"{base}.fits",
         st05 / f"quartz_diff_{suffix}.fits",
     ])
 
     return base, mask, slitid, quartz
-
 
 def save_fullframe(img, outjpg, title, cmap="gray", p_lo=5.0, p_hi=99.5):
     vmin, vmax = robust_limits(img, p_lo, p_hi)
@@ -139,12 +139,14 @@ def bounding_box(mask, pad=8):
     return y0, y1, x0, x1
 
 
-def save_montage(images, titles, outjpg, overlays=None, ncols=6, p_lo=5.0, p_hi=99.5):
+def save_montage(images, titles, outjpg, overlays=None, ncols=6, nrows=None, p_lo=5.0, p_hi=99.5):
     if not images:
         return
 
     n = len(images)
-    nrows = math.ceil(n / ncols)
+    if nrows is None:
+        nrows = math.ceil(n / ncols)
+
     fig = plt.figure(figsize=(ncols * 2.3, nrows * 2.1), dpi=170)
 
     if overlays is None:
@@ -166,6 +168,11 @@ def save_montage(images, titles, outjpg, overlays=None, ncols=6, p_lo=5.0, p_hi=
         ax.set_title(ttl, fontsize=7)
         ax.set_xticks([])
         ax.set_yticks([])
+
+    # Fill empty panels explicitly
+    for j in range(n + 1, ncols * nrows + 1):
+        ax = fig.add_subplot(nrows, ncols, j)
+        ax.axis("off")
 
     fig.suptitle(outjpg.stem, fontsize=10)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
@@ -238,7 +245,7 @@ def centered_cutout_from_geometry(quartz, hdr, xhalf=14, pady=20):
     x1 = min(nx, int(np.ceil(xcen_med + xhalf + 1)))
 
     cut = quartz[y0:y1, x0:x1].copy()
-
+    
     overlay = {
         "yy": yy - y0,
         "xcen": xcen - x0,
@@ -260,7 +267,9 @@ def main():
     ap.add_argument("--quartz", default=None)
     ap.add_argument("--outdir", default=None)
     ap.add_argument("--pad", type=int, default=8)
-    ap.add_argument("--max-slits", type=int, default=24)
+    ap.add_argument("--max-slits", type=int, default=36)
+    ap.add_argument("--title", default=None)
+
     args = ap.parse_args()
 
     traceset = args.traceset.upper()
@@ -314,12 +323,15 @@ def main():
             ttls.append(slit_name)
             ovs.append(overlay)
     
+    _nrows = -(-args.max_slits // 6)  # Ceiling Formula: -(-a // b)
     save_montage(
         imgs,
         ttls,
         outdir / f"{traceset.lower()}_slit_montage.jpg",
         overlays=ovs,
-    )    
+        ncols=6,
+        nrows=_nrows,
+    )
 
     print("[OK] mask   :", mask_path)
     print("[OK] slitid :", slitid_path)

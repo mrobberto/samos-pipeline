@@ -6,6 +6,12 @@ step09_twopass_continuum_driver.py → experimental refinement driver
 step09a_measure_oh_shifts.py → main OH shift stage
 step09b_apply_oh_shifts.py → apply stage
 
+09 ABAB sky-line subtraction
+→ 09g merge preferred B1/B2 products
+→ 09j build ABAB component supertable / empirical sky atlas
+→ 09h consensus restoration safety layer
+→ final Step09 product for Step10
+
 ## Purpose
 
 Refine wavelength calibration using OH night-sky emission lines.
@@ -43,13 +49,18 @@ File:
 * Cross-correlate with reference slit
 * Combine shifts across windows
 
-Output:
-
+Output Science product:
+```text
+09_abab/extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus.fits
+```
 ```text
 QC_OH_BG_registration.csv
 ```
 
 ---
+### Step09b_abab_driver — apply shifts
+
+Each ABAB OH-modeling pass asks step09e to save its fitted Gaussian components. 
 
 ### Step09b — apply shifts
 

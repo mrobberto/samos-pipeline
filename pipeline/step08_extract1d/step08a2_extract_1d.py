@@ -1,17 +1,124 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Step08a2 — extract 1D spectra using the ridge/quality products from Step08a1.
+Step08a2 — ridge-guided optimal extraction from TRACECOORDS slit images.
 
-Reads:
-- contract-compatible analysis FITS written by step08a1_trace_analysis.py
-- editable CSV table with GOOD/USE decisions
+PURPOSE
+-------
+Perform the final 1D spectral extraction using the ridge and slit-quality
+products derived in Step08a1.
 
-Writes:
-- extract1d_optimal_ridge_{even,odd}.fits (same filename, now with real spectra)
+This stage converts TRACECOORDS slit images into calibrated 1D spectra
+in pixel space, using a ridge-centered optimal extraction with robust
+sky estimation and aperture-loss correction.
 
-This preserves compatibility with the existing Step08b/08c scripts and the
-existing Step08 QC scripts.
+This is the photometric counterpart to Step08a1, which provides the
+geometric and quality-control inputs.
+
+INPUT
+-----
+1. Step06 TRACECOORDS slit images:
+   *_EVEN_tracecoords.fits, *_ODD_tracecoords.fits
+
+2. Step08a1 analysis FITS:
+   trace_analysis_optimal_ridge_{even,odd}.fits
+   Provides:
+     - ridge X0(y)
+     - TRACECOORDS slit boundaries (TRXLEFT/TRXRIGHT)
+     - per-slit metadata
+
+3. Step08a1 slit-quality CSV:
+   step08a_slit_quality_{even,odd}.csv
+   Provides:
+     - GOOD / USE flags
+     - FWHM estimates
+     - diagnostic metrics
+
+OUTPUT
+------
+extract1d_optimal_ridge_{even,odd}.fits
+
+For each slit:
+  YPIX           : dispersion pixel index
+  FLUX           : optimal extracted flux (sky-subtracted)
+  VAR            : variance of FLUX
+  SKY            : scalar sky level per row
+  OBJ_PRESKY     : simple aperture sum before sky subtraction
+  X0             : ridge position
+  NOBJ, NSKY     : number of object/sky pixels used
+  SKYSIG         : sky noise estimate
+  APLOSS_FRAC    : fraction of PSF inside valid slit
+  FLUX_APCORR    : aperture-loss corrected flux
+  VAR_APCORR     : corrected variance
+  EDGEFLAG       : truncation flag
+  TRXLEFT/RIGHT  : slit boundaries
+
+SCIENTIFIC METHOD
+-----------------
+
+1. Ridge-guided extraction
+   - Uses X0(y) from Step08a1 (no re-fitting here)
+   - Extraction is centered on the science-determined ridge
+   - Ridge is allowed to deviate from quartz geometry
+
+2. Sky estimation (row-first, with fallback)
+   - Primary: row-by-row sky estimation excluding object aperture
+   - Rejects bright pixels via sigma-clipping
+   - Applies low-tail selection to avoid object contamination
+   - Fallback: pooled sky from neighboring rows (Y ± YSKYWIN)
+   - Final fallback: continuity from previous valid row
+
+   This preserves narrow OH features while remaining robust in
+   crowded or low-S/N conditions.
+
+3. Optimal extraction (Horne-style)
+   - Gaussian spatial weighting centered on X0(y)
+   - Per-slit PSF width derived from Step08a1 FWHM
+   - Variance includes:
+       • Poisson noise
+       • read noise
+       • sky noise
+
+4. Aperture-loss correction
+   - Computes fraction of PSF inside valid TRACECOORDS region
+   - Applies correction when truncation is mild
+   - Flags heavily truncated rows (EDGEFLAG)
+
+5. Slit selection
+   - Extraction is performed only if USE==1 (or GOOD fallback)
+   - Non-selected slits are propagated with NaN spectral columns
+
+ROBUSTNESS FEATURES
+-------------------
+- Ridge fully decoupled from extraction (no re-centering)
+- Row-first sky preserves spectral line structure
+- Pooled sky fallback prevents data loss in narrow slits
+- Continuity fallback stabilizes sparse regions
+- Aperture correction handles edge clipping
+- Per-row and per-slit quality flags
+
+DESIGN NOTES
+------------
+- Operates entirely in TRACECOORDS
+- Does NOT modify ridge (geometry fixed from Step08a1)
+- Preserves compatibility with Step08b/08c
+- Overwrites placeholder spectral columns from Step08a1
+- Designed to work with manual intervention via CSV
+
+DOES NOT DO
+-----------
+- Ridge detection (Step08a1)
+- Wavelength calibration (Step08c)
+- OH/telluric correction (Step09)
+- Flux calibration (Step11)
+
+PIPELINE ROLE
+-------------
+Step08a1 → detect ridge, classify slits
+Step08a2 → extract flux along ridge
+
+Together they replace the legacy monolithic Step08a extraction.
+
 """
 from __future__ import annotations
 
@@ -162,43 +269,43 @@ def estimate_sky_row(row: np.ndarray, x0: float) -> tuple[float, int, float]:
     dx = xx - float(x0)
     valid = np.isfinite(row)
 
-    # Object aperture
     obj_mask = valid & (np.abs(dx) <= W_OBJ)
     if obj_mask.sum() < 2:
         return np.nan, 0, np.nan
 
-    # Robust baseline
-    base = np.nanmedian(row[valid])
-
-    # Peak inside the extraction region
-    peak = np.nanmax(row[obj_mask] - base)
-    if not np.isfinite(peak) or peak <= 0:
-        return np.nan, 0, np.nan
-
-    # Keep only pixels outside the extraction region and sufficiently faint
-    frac_peak = 0.2
-    sky_thresh = base + frac_peak * peak
-    sky_mask = valid & (~obj_mask) & (row <= sky_thresh)
+    # Candidate sky pixels outside object aperture
+    sky_mask = valid & (~obj_mask)
 
     if SKY_EDGE_EXCLUDE_LEFT > 0:
         sky_mask[:SKY_EDGE_EXCLUDE_LEFT] = False
     if SKY_EDGE_EXCLUDE_RIGHT > 0:
         sky_mask[-SKY_EDGE_EXCLUDE_RIGHT:] = False
 
-    if sky_mask.sum() < SKY_NMIN:
+    vals = np.asarray(row[sky_mask], float)
+    vals = vals[np.isfinite(vals)]
+
+    if vals.size < SKY_NMIN:
         return np.nan, 0, np.nan
 
-    vals = np.asarray(row[sky_mask], float)
-    ok = sigma_clip_high_mask(vals, k=SKY_CLIP_K, iters=SKY_CLIP_ITERS)
-    use = vals[ok]
+    # Use faintest valid outside-aperture pixels.
+    # For very narrow slits, keep at least 2–3 pixels.
+    frac = 0.35
+    nkeep = max(SKY_NMIN, int(np.ceil(frac * vals.size)))
+    nkeep = min(nkeep, vals.size)
+
+    use = np.sort(vals)[:nkeep]
 
     if use.size < SKY_NMIN:
         return np.nan, 0, np.nan
 
     skylev = float(np.median(use))
     skysig = float(mad_sigma(use))
-    return skylev, int(use.size), skysig
 
+    # If MAD is undefined with very few pixels, use a conservative fallback.
+    if not np.isfinite(skysig):
+        skysig = float(np.std(use)) if use.size > 1 else np.nan
+
+    return skylev, int(use.size), skysig
 
 def extract_one_slit(img: np.ndarray, x0: np.ndarray, profile_sigma_slit: float):
     """
@@ -280,6 +387,11 @@ def extract_one_slit(img: np.ndarray, x0: np.ndarray, profile_sigma_slit: float)
         obj_mask = valid & (np.abs(dx) <= W_OBJ)
         if obj_mask.sum() < 2:
             continue
+        
+        # Always save pre-sky object aperture sum, even if sky fails later.
+        obj_presky[y] = float(np.nansum(row[obj_mask]))
+        nobj[y] = int(obj_mask.sum())
+
 
         # --- First try the nominal row-by-row sky estimate ---
         skylev, nsky_y, skysig_y = estimate_sky_row(row, x0[y])
@@ -354,9 +466,6 @@ def extract_one_slit(img: np.ndarray, x0: np.ndarray, profile_sigma_slit: float)
 
         # Row after subtraction of the scalar sky level.
         row_sub = row - skylev
-
-        # OBJ_PRESKY is the simple aperture sum before subtraction.
-        obj_presky[y] = float(np.nansum(row[obj_mask]))
 
         nobj[y] = int(obj_mask.sum())
         nsky[y] = int(nsky_y)
@@ -453,30 +562,42 @@ with fits.open(IN_FITS, memmap=False) as h06, fits.open(ANALYSIS_FITS, memmap=Fa
             profile_sigma_slit = float(PROFILE_SIGMA)
     
         use = int(row["USE"]) if "USE" in row.index and pd.notna(row["USE"]) else int(row["GOOD"])
-        if use:
-            arrays = extract_one_slit(img, x0, profile_sigma_slit)
-            arrays["YPIX"] = np.arange(img.shape[0], dtype=np.int32)
-            newh = replace_table_data(h, arrays)
-            
-            # Preserve geometry metadata needed downstream by 08c.
-            for key in ["Y0DET", "YMIN", "SHIFT2M", "SLITID"]:
-                if key in h.header:
-                    newh.header[key] = (h.header[key], h.header.comments[key])
-                    
-            newh.header["S08GOOD"] = int(row["GOOD"])
-            newh.header["S08USE"] = int(use)
-            newh.header["S08CLAS"] = str(row["CLASS"])
-            newh.header["PSFSIG"] = (float(profile_sigma_slit), "Gaussian sigma used for extraction")
-            set_hdr_float_safe(newh.header, "S08FWHM", fwhm_slit, "Brightest-block FWHM from 08a1/CSV")
-            set_hdr_float_safe(newh.header, "S08DXC", float(row["DX_CENTER"]) if pd.notna(row["DX_CENTER"]) else np.nan, "Peak minus slit center")
-            out_hdus.append(newh)
-        else:
-            # preserve analysis table, but mark as not used and leave spectral columns NaN
-            newh = h.copy()
-            newh.header["S08GOOD"] = int(row["GOOD"])
-            newh.header["S08USE"] = int(use)
-            newh.header["S08CLAS"] = str(row["CLASS"])
-            out_hdus.append(newh)
+        
+        # Always compute aperture-sum products so OBJ_PRESKY is available for all slits.
+        arrays = extract_one_slit(img, x0, profile_sigma_slit)
+        arrays["YPIX"] = np.arange(img.shape[0], dtype=np.int32)
+        
+        # If slit is not selected for local sky-subtracted extraction, preserve only
+        # the geometry and pre-sky signal. Leave sky-subtracted products NaN.
+        if not use:
+            arrays["FLUX"][:] = np.nan
+            arrays["VAR"][:] = np.nan
+            arrays["SKY"][:] = np.nan
+            arrays["NSKY"][:] = 0
+            arrays["SKYSIG"][:] = np.nan
+            arrays["FLUX_APCORR"][:] = np.nan
+            arrays["VAR_APCORR"][:] = np.nan
+        
+        newh = replace_table_data(h, arrays)
+        
+        # Preserve geometry metadata needed downstream by 08c.
+        for key in ["Y0DET", "YMIN", "SHIFT2M", "SLITID"]:
+            if key in h.header:
+                newh.header[key] = (h.header[key], h.header.comments[key])
+        
+        newh.header["S08GOOD"] = int(row["GOOD"])
+        newh.header["S08USE"] = int(use)
+        newh.header["S08CLAS"] = str(row["CLASS"])
+        newh.header["PSFSIG"] = (float(profile_sigma_slit), "Gaussian sigma used for extraction")
+        set_hdr_float_safe(newh.header, "S08FWHM", fwhm_slit, "Brightest-block FWHM from 08a1/CSV")
+        set_hdr_float_safe(
+            newh.header,
+            "S08DXC",
+            float(row["DX_CENTER"]) if pd.notna(row["DX_CENTER"]) else np.nan,
+            "Peak minus slit center",
+        )
+        
+        out_hdus.append(newh)
 
 fits.HDUList(out_hdus).writeto(OUT_FITS, overwrite=True)
 print(f"Wrote {OUT_FITS}")

@@ -122,21 +122,18 @@ def pick_science_file(st06: Path, explicit: str | None = None) -> Path:
     ])
 
 
-def pick_corr_file(st06: Path, traceset: str, use_reg: bool, explicit: str | None = None) -> Path:
-    suffix = traceset.lower()
-    preferred = f"science_pixflatcorr_reg_{suffix}.fits" if use_reg else f"science_pixflatcorr_{suffix}.fits"
-    return first_existing([
-        Path(explicit) if explicit else None,
-        st06 / preferred,
-        *sorted(st06.glob(f"*pixflatcorr*_{suffix}.fits"), key=lambda p: p.stat().st_mtime, reverse=True),
-    ])
-
-
 def pick_flat_file(st05: Path, traceset: str, explicit: str | None = None) -> Path:
     suffix = traceset.lower()
+    if traceset.upper() == "EVEN":
+        cfg_flat = getattr(config, "PIXFLAT_EVEN", None)
+    else:
+        cfg_flat = getattr(config, "PIXFLAT_ODD", None)
+
     return first_existing([
         Path(explicit) if explicit else None,
+        Path(cfg_flat) if cfg_flat else None,
         st05 / f"pixflat_{suffix}.fits",
+        st05 / f"PixelFlat_from_quartz_diff_{traceset.upper()}.fits",
     ])
 
 
@@ -174,6 +171,36 @@ def write_report(path: Path, traceset: str, use_reg: bool, science_path: Path, c
             if k in hdr_corr:
                 f.write(f" {k:10s} = {hdr_corr[k]}\n")
 
+def pick_corr_file(st06, target_stem, traceset):
+    traceset = traceset.upper()
+
+    candidates = [
+        st06 / f"FinalScience_{target_stem}_ADUperS_pixflatcorr_{traceset}.fits",
+        st06 / f"FinalScience_{target_stem}_ADUperS_pixflatcorr_clipped_{traceset}.fits",
+        st06 / f"FinalScience_{target_stem}_ADUperS_reg_pixflatcorr_{traceset}.fits",
+        st06 / f"FinalScience_{target_stem}_ADUperS_reg_pixflatcorr_clipped_{traceset}.fits",
+    ]
+
+    candidates += sorted(st06.glob(f"FinalScience*_pixflatcorr_{traceset}.fits"))
+    candidates += sorted(st06.glob(f"FinalScience*_pixflatcorr_clipped_{traceset}.fits"))
+    candidates += sorted(st06.glob(f"FinalScience*_reg_pixflatcorr_{traceset}.fits"))
+    candidates += sorted(st06.glob(f"FinalScience*_reg_pixflatcorr_clipped_{traceset}.fits"))
+
+    seen = set()
+    unique = []
+    for p in candidates:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+
+    existing = [p for p in unique if p.exists()]
+    if not existing:
+        raise FileNotFoundError(
+            f"No Step06b corrected science file found for {traceset} in {st06}"
+        )
+
+    existing.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return existing[0]
 
 def main():
     ap = argparse.ArgumentParser(description="Step06b QC — inspect full-frame pixel-flat correction")
@@ -189,18 +216,27 @@ def main():
     traceset = args.traceset.upper()
     use_reg = bool(args.reg)
 
-    st04 = Path(config.ST04_PIXFLAT)
-    st05 = Path(config.ST05_FLATCORR)
+    st04 = Path(config.ST04_TRACES)
+    st05 = Path(config.ST05_PIXFLAT)
     st06 = Path(config.ST06_SCIENCE)
+    st06 = Path(config.ST06_SCIENCE)
+    target_stem = getattr(config, "TARGET_FILE_STEM", "dolidze")
+    
+    corr_path = (
+        Path(args.corr).expanduser()
+        if args.corr
+        else pick_corr_file(st06, target_stem, traceset)
+    )
 
     science_path = pick_science_file(st06, args.science)
-    corr_path = pick_corr_file(st06, traceset, use_reg, args.corr)
+    #corr_path = pick_corr_file(st06, traceset, use_reg, args.corr)
     flat_path = pick_flat_file(st05, traceset, args.flat)
     mask_path = pick_mask_file(st04, traceset, args.mask)
-
+    
     if science_path is None or corr_path is None or flat_path is None or mask_path is None:
         raise FileNotFoundError("Could not resolve one or more required files.")
-
+        
+    
     sci = fits.getdata(science_path).astype(float)
     corr = fits.getdata(corr_path).astype(float)
     flat = fits.getdata(flat_path).astype(float)

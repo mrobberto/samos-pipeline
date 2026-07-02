@@ -1,4 +1,22 @@
 #!/usr/bin/env python3
+"""
+Step09 ABAB driver — per-slit continuum/OH cleanup orchestration.
+
+Runs the Step09 cleanup sequence on one slit or all slit extensions:
+
+  A1: continuum estimate on OBJ_PRESKY
+  B1: OH-line model/subtraction using CONTINUUM_P1
+  A2: continuum refinement on STELLAR_P1
+  B2: final OH-line model/subtraction using CONTINUUM_P2
+
+For each slit, the driver compares the robust RMS of RESID_POSTOH_P1 and
+RESID_POSTOH_FINAL, copies the lower-RMS product to step09_preferred.fits, and
+writes step09_selection.txt plus a global step09_summary.csv.
+
+This script is an orchestrator: continuum fitting is delegated to
+step09d_twopass_continuum_driver.py, and OH modeling is delegated to
+step09e_iterative_oh_line_model.py.
+"""
 from __future__ import annotations
 
 import argparse
@@ -51,8 +69,8 @@ def parse_args():
     p.add_argument("--outdir", type=Path, required=True)
     p.add_argument("--slit", type=str, default=None)
     p.add_argument("--python", type=str, default=sys.executable)
-    p.add_argument("--cont-script", type=Path, default=Path("pipeline/step09_oh_refine/step09_twopass_continuum_driver.py"))
-    p.add_argument("--oh-script", type=Path, default=Path("pipeline/step09_oh_refine/step09_iterative_oh_line_model.py"))
+    p.add_argument("--cont-script", type=Path, default=Path("pipeline/step09_oh_refine/step09d_twopass_continuum_driver.py"))
+    p.add_argument("--oh-script", type=Path, default=Path("pipeline/step09_oh_refine/step09e_iterative_oh_line_model.py"))
     p.add_argument("--n-bright", type=int, default=50)
     p.add_argument("--n-faint", type=int, default=80)
     p.add_argument("--max-cycles", type=int, default=7)
@@ -64,11 +82,19 @@ def parse_args():
     p.add_argument("--a2-window-nm", type=float, default=35.0)
     p.add_argument("--a2-stride-nm", type=float, default=30.0)
     p.add_argument("--a2-passes", type=int, default=1)
+    p.add_argument("--qcdir", type=Path, default=None, help="Directory for QC/diagnostic outputs")
     return p.parse_args()
 
 def run_one_slit(args, slit_name: str):
     slit_outdir = args.outdir / slit_name
     slit_outdir.mkdir(parents=True, exist_ok=True)
+    
+    qc_root = args.qcdir if hasattr(args, "qcdir") and args.qcdir else None
+    if qc_root is not None:
+        slit_qcdir = Path(qc_root) / slit_name
+        slit_qcdir.mkdir(parents=True, exist_ok=True)
+    else:
+        slit_qcdir = slit_outdir
 
     pass1a = slit_outdir / "step09_pass1a_continuum.fits"
     pass1b = slit_outdir / "step09_pass1b_oh.fits"
@@ -105,6 +131,7 @@ def run_one_slit(args, slit_name: str):
         "--n-bright", str(args.n_bright),
         "--n-faint", str(args.n_faint),
         "--max-cycles", str(args.max_cycles),
+        "--comp-table-csv", str(slit_qcdir / "step09_pass1b_components.csv"),
         *common_slit,
     ])
 
@@ -136,6 +163,7 @@ def run_one_slit(args, slit_name: str):
         "--n-bright", str(args.n_bright),
         "--n-faint", str(args.n_faint),
         "--max-cycles", str(args.max_cycles),
+        "--comp-table-csv", str(slit_qcdir / "step09_final_components.csv"),
         *common_slit,
     ])
 
@@ -153,7 +181,7 @@ def run_one_slit(args, slit_name: str):
     import shutil
     shutil.copy(preferred, preferred_path)
 
-    log_path = slit_outdir / "step09_selection.txt"
+    log_path = slit_qcdir / "step09_selection.txt"
     with open(log_path, "w") as f:
         f.write(f"SLIT = {slit_name}\n")
         f.write("RULE = choose lower robust RMS residual\n")

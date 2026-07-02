@@ -91,7 +91,7 @@ class SAMOS:
         effective_gain=2.0,
         return_mask=False,
     ):
-        cleaned, mask = lacosmic.lacosmic(
+        cleaned, mask = lacosmic.remove_cosmics(
             image,
             contrast=contrast,
             cr_threshold=cr_threshold,

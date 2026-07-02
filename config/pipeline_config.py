@@ -25,14 +25,18 @@ REFERENCE_TABLES_DIR = CALIB_ROOT / "reference_tables"
 REFERENCE_FILTERS_DIR = REFERENCE_TABLES_DIR / "filters"
 REFERENCE_NIST_DIR = REFERENCE_TABLES_DIR / "nist_list"
 REFERENCE_PHOTOMETRY_DIR = REFERENCE_TABLES_DIR / "photometry"
+REFERENCE_REGIONS_DIR = REFERENCE_TABLES_DIR / "regions"
 #
 SISI_DIR = CALIB_ROOT / "sisi"
 #
 THROUGHPUT_DIR = CALIB_ROOT / "throughput"
+#
+PRODUCTS_DIR = REPO_ROOT / "products"
 
 # LEGACY, to be remove
 WAVECAL_CALIB_DIR = CALIB_ROOT / "wavecal"
 THROUGHPUT_TABLE = THROUGHPUT_DIR / "throughput_total_SAMOS_SOAR_CCD.csv"
+
 
 # -----------------------------------------------------------------------------
 
@@ -75,13 +79,23 @@ NAME_FINAL_SCIENCE_TEMPLATE = "FinalScience_{stem}_ADUperS.fits"
 
 # -----------------------------------------------------------------------------
 # Step07
-NAME_MASTER_ARC_DIFF = "ArcDiff_036.arc_biascorr_cr_minus_037.arc_biascorr_cr.fits"
+#07a: creates:
+NAME_MASTER_ARC_DIFF = "arc_diff.fits"  #was "ArcDiff_036.arc_biascorr_cr_minus_037.arc_biascorr_cr_pixflatcorr_clipped.fits"
+#07b: creates:
+NAME_MASTER_ARC_DIFF_PIXFLATCORR_CLIPPED = "arc_diff_pixflatcorr_clipped.fits"  #was "ArcDiff_036.arc_biascorr_cr_minus_037.arc_biascorr_cr_pixflatcorr_clipped.fits"
+#07c: creates:
+NAME_MASTER_ARC_DIFF_PIXFLATCORR_CLIPPED_1D_SLITIT_EVEN = "arc_diff_pixflatcorr_clipped_1d_slitid_EVEN.fits"
+NAME_MASTER_ARC_DIFF_PIXFLATCORR_CLIPPED_1D_SLITIT_ODD  = "arc_diff_pixflatcorr_clipped_1d_slitid_ODD.fits"
+
 NAME_MASTER_ARC = "arc_master.fits"
 NAME_WAVESOL = "arc_master_wavesol.fits"
 NAME_WAVESOL_ALL = "arc_wavesol_per_slit.fits"
 NAME_SHIFT2M_TABLE = "slit_shift2m_table.csv"
 NAME_ARC_1D_WAVELENGTH_ALL = "arc_1d_wavelength_all.fits"
 
+#wavelength tweaks, if needed, are done looking at these files
+NAME_ARC_WAVELENGTH_BASE = "arc_1d_wavelength_all.fits"
+NAME_ARC_WAVELENGTH_TWEAKED = "arc_1d_wavelength_all_trial_tweak.fits"
 # -----------------------------------------------------------------------------
 # Step08
 NAME_EXTRACT1D_EVEN = "extract1d_optimal_ridge_even.fits"
@@ -94,21 +108,27 @@ NAME_EXTRACT1D_WAV = "extract1d_optimal_ridge_all_wav.fits"
 NAME_OH_SHIFT_CSV = "oh_shift_table.csv"
 NAME_OH_SHIFT_QC_CSV = "QC_OH_BG_registration.csv"
 NAME_EXTRACT1D_OHCLEAN = "extract1d_optimal_ridge_all_wav_ohclean.fits"
+NAME_EXTRACT1D_OHREF = "extract1d_optimal_ridge_all_wav_OHref.fits"
+NAME_EXTRACT1D_STEP09_ABAB = "extract1d_optimal_ridge_all_wav_step09_abab_preferred.fits"
+NAME_EXTRACT1D_STEP09_CONSENSUS = "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus.fits"
 
 # -----------------------------------------------------------------------------
 # Step10 = telluric
 NAME_TELLURIC_TEMPLATE = "telluric_O2_template.fits"
-NAME_EXTRACT1D_TELLCOR = "extract1d_optimal_ridge_all_wav_ohclean_tellcorr.fits"
+NAME_EXTRACT1D_TELLCOR = "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus_tellcorr.fits"
 
 # -----------------------------------------------------------------------------
 # Step11 = flux calibration
 NAME_STEP11_RADEC = "slit_trace_radec_all.csv"
 NAME_STEP11_PHOTCAT = "slit_trace_radec_skymapper_all.csv"
+NAME_STEP11_SUMMARY_CSV = "Step11_fluxcal_summary.csv"
+NAME_STEP11_QA_PNG = "Step11_fluxcal_QA.png"
 
 # Main Step11 science products
-NAME_EXTRACT1D_FLUXCAL = "Extract1D_fluxcal.fits"
+NAME_EXTRACT1D_FLUXCAL = "extract1d_fluxcal.fits"
 NAME_FLUXCAL_SUMMARY_CSV = "Step11_fluxcal_summary.csv"
 NAME_STEP11_QAPLOT = "Step11_fluxcal_QA.png"
+NAME_STEP11_CONTINUUM_SNR_CSV = "Extract1d_fluxcal_continuum_snr.csv"
 
 # Calibration-fit diagnostics / closeout products
 NAME_ABSCAL_SUMMARY_CSV = "extract1d_optimal_ridge_all_wav_abscal_summary.csv"
@@ -120,33 +140,46 @@ NAME_QC_STEP11_SUMMARY_PDF = "qc_step11_summary_pages.pdf"
 NAME_QC_STEP11_RESPONSE_PDF = "qc_step11_response_summary.pdf"
 
 # -----------------------------------------------------------------------------
-# Step12 = final calibration / illumination correction
+# Step12 = final calibration / stellar-response refinement
+#
+# 12a/12b/12c are archived experimental branches.
+# Active path:
+#   12d builds an ensemble stellar-response correction.
+#   12e applies the master response and optional photometric normalization.
+# -----------------------------------------------------------------------------
 
-# Step12a illumination products
-NAME_ILLUM1D_RAW_EVEN = "illum1d_raw_slits_even.fits"
-NAME_ILLUM1D_RAW_ODD  = "illum1d_raw_slits_odd.fits"
-NAME_ILLUM1D_PROFILE_EVEN = "illum1d_profile_even.fits"
-NAME_ILLUM1D_PROFILE_ODD  = "illum1d_profile_odd.fits"
+NAME_EXTRACT1D_STEP12_INPUT = NAME_EXTRACT1D_FLUXCAL
+NAME_EXTRACT1D_FINALCAL = "extract1d_finalcal.fits"
+NAME_EXTRACT1D_FINALCAL_STELLARRESP = NAME_EXTRACT1D_FINALCAL
 
-# Step12b illumination-corrected spectra
-NAME_EXTRACT1D_ILLUMCORR = "extract1d_optimal_ridge_all_wav_ohclean_tellcorr_illumcorr.fits"
-
-# Step12c final refined spectra
-NAME_EXTRACT1D_FINALCAL = "extract1d_optimal_ridge_all_wav_ohclean_tellcorr_illumcorr_refined_perstar_edge_matched.fits"
-#NAME_EXTRACT1D_STEP12C_REFINED_EDGE = "Extract1D_fluxcal_refined_perstar_edge_matched.fits"
-NAME_STEP12C_SUMMARY_CSV = "Extract1D_fluxcal_step12c_summary.csv"
-NAME_STEP12C_DEBUG_CSV = "Extract1D_fluxcal_step12c_debug.csv"
-NAME_STEP12C_METADATA_JSON = "Extract1D_fluxcal_step12c_metadata.json"
-
-# Step12 summary / metadata
-NAME_STEP12_SUMMARY_CSV = "Step12_finalcal_summary.csv"
+NAME_STEP12_FINAL_MOSAIC_PDF = "qc_step12_final_mosaic.pdf"
+NAME_STEP12_ILLUM_PROFILE_EVEN = "illum1d_profile_even.fits"
+NAME_STEP12_ILLUM_PROFILE_ODD  = "illum1d_profile_odd.fits"
+NAME_STEP12_MASTER_RESPONSE = "step12_master_response.fits"
 NAME_STEP12_QAPLOT = "Step12_finalcal_QA.png"
 
-# Step12 QC products
-NAME_QC_STEP12_PROFILE_PDF = "qc_step12_illum_profile.pdf"
-NAME_QC_STEP12_SCIENCE_PDF = "qc_step12_science_compare.pdf"
-NAME_QC_STEP12A_RAW_EVEN_PDF = "qc_step12a_raw_even.pdf"
-NAME_QC_STEP12A_RAW_ODD_PDF  = "qc_step12a_raw_odd.pdf"
+
+NAME_STEP12D_DIR = "step12d_stellar_response"
+NAME_STEP12D_MASTER = "step12d_stellar_respon_response_per_slit.fits"
+NAME_STEP12D_MASTER_FITS = "step12d_stellar_response_master.fits"
+NAME_STEP12D_METADATA_JSON = "step12d_stellar_response_metadata.json"
+NAME_STEP12D_PER_SLIT = "step12d_stellar_response_per_slit.fits"
+NAME_STEP12D_PER_SLIT_FITS = "step12d_stellar_response_master.fits"
+NAME_STEP12D_SUMMARY = "step12d_stellar_response_summary.csv"
+NAME_STEP12D_SUMMARY_CSV = "step12d_stellar_response_summary.csv"
+#STEP12D_DIR = NAME_STEP12_DIR / "step12d_stellar_response"
+STEP12D_MASTER_RESPONSE = "step12d_stellar_response_master.fits"
+
+
+EXTRACT1D_FINALCAL_STELLARRESP = (
+    "extract1d_finalcal_stellarresp.fits"
+)
+
+#NAME_EXTRACT1D_FINALCAL = "extract1D_finalcal_stellarresp.fits"
+
+NAME_QC_STEP12D_RESPONSE_PDF = "qc_step12d_stellar_response.pdf"
+NAME_QC_STEP12DE_COMPREHENSIVE_PDF = "qc_step12de_comprehensive.pdf"
+NAME_QC_STEP12_SUMMARY_PDF = "qc_step12_summary.pdf"
 
 # -----------------------------------------------------------------------------
 
@@ -208,7 +241,7 @@ def qc_step_dir(qc_root: Path, step_tag: str) -> Path:
 
 def science_tracecoords_name(target_file_stem: str, parity: str) -> str:
     parity = parity.upper()
-    return f"FinalScience_{target_file_stem}_ADUperS_pixflatcorr_clipped_{parity}_tracecoords.fits"
+    return f"FinalScience_{target_file_stem}_ADUperS_pixflatcorr_{parity}_tracecoords.fits"
 
 def final_science_name(target_file_stem: str) -> str:
     """
@@ -245,18 +278,23 @@ def build_config(profile):
 
     profile.TARGET_ROOT = profile.SAMI_ROOT / profile.TARGET_NAME
     profile.INPUT_DIR = profile.TARGET_ROOT / "input"
-    profile.TABLES_DIR = profile.TARGET_ROOT / "tables"
-    profile.TARGET_LOGDIR = profile.TARGET_ROOT / "logs"
-    profile.REDUCED_DIR = profile.TARGET_ROOT / "reduced"
-
-    profile.QC_DIR = profile.REDUCED_DIR / "qc"
-
-    # Step directories
+    
+    # Pipeline products live outside the raw/acquisition tree.
+    # Target profile may define PRODUCT_ROOT; otherwise fall back to legacy location.
+    if not hasattr(profile, "PRODUCT_ROOT"):
+        profile.PRODUCT_ROOT = profile.TARGET_ROOT
+    
+    profile.TABLES_DIR = profile.PRODUCT_ROOT / "tables"
+    profile.TARGET_LOGDIR = profile.PRODUCT_ROOT / "logs"
+    profile.REDUCED_DIR = profile.PRODUCT_ROOT / "reduced"
+    profile.QC_DIR = profile.PRODUCT_ROOT / "qc"
+    
     profile.ST00_ORIENT = preproc_step_dir(profile.PREPROC_DIR, "00")
     profile.ST01_BIAS = preproc_step_dir(profile.PREPROC_DIR, "01")
     profile.ST02_BIASCORR = preproc_step_dir(profile.PREPROC_DIR, "02")
     profile.ST03_CRCLEAN = preproc_step_dir(profile.PREPROC_DIR, "03")
     profile.ST03P5_ROWSTRIPE = preproc_step_dir(profile.PREPROC_DIR, "03.5")
+
 
     profile.ST04_TRACES = reduced_step_dir(profile.REDUCED_DIR, "04")
     profile.ST05_PIXFLAT = reduced_step_dir(profile.REDUCED_DIR, "05")
@@ -267,16 +305,32 @@ def build_config(profile):
     # Canonical Step09 name should be standardized here.
     profile.ST09 = reduced_step_dir(profile.REDUCED_DIR, "09")
     profile.ST09_OH_REFINE = profile.ST09
+    profile.ARC_WAVELENGTH_BASE = profile.ST07_WAVECAL / NAME_ARC_WAVELENGTH_BASE
+    profile.ARC_WAVELENGTH_TWEAKED = profile.ST07_WAVECAL / NAME_ARC_WAVELENGTH_TWEAKED
+    profile.ARC_WAVELENGTH_ACTIVE = (
+        profile.ARC_WAVELENGTH_TWEAKED
+        if profile.ARC_WAVELENGTH_TWEAKED.exists()
+        else profile.ARC_WAVELENGTH_BASE
+    )
+    profile.EXTRACT1D_STEP09_ABAB = profile.ST09_OH_REFINE / NAME_EXTRACT1D_STEP09_ABAB
+    profile.EXTRACT1D_STEP09_CONSENSUS = profile.ST09_OH_REFINE / NAME_EXTRACT1D_STEP09_CONSENSUS
+    # canonical downstream aliases
+    profile.EXTRACT1D_OHCLEAN = profile.EXTRACT1D_STEP09_CONSENSUS
     profile.ST09_ABAB = profile.ST09  # temporary alias, 
+    
+    
     profile.ST10_TELLURIC = reduced_step_dir(profile.REDUCED_DIR, "10")
     profile.ST11_FLUXCAL = reduced_step_dir(profile.REDUCED_DIR, "11")
     profile.ST12_FINALCAL = reduced_step_dir(profile.REDUCED_DIR, "12")
+    profile.QC12_DIR = profile.ST12_FINALCAL / "qc_step12"
 
     # External region products
-    profile.RADEC_EVEN_CSV = profile.REGIONS_DIR / "radec_Even.csv"
-    profile.RADEC_ODD_CSV = profile.REGIONS_DIR / "radec_Odd.csv"
-    profile.EVEN_REG_FILE = profile.REGIONS_DIR / "Even_traces_mask_reg.fits"
-    profile.ODD_REG_FILE = profile.REGIONS_DIR / "Odd_traces_mask_reg.fits"
+    profile.RADEC_EVEN_CSV = REFERENCE_REGIONS_DIR / "radec_Even.csv"
+    profile.RADEC_ODD_CSV = REFERENCE_REGIONS_DIR / "radec_Odd.csv"
+    profile.EVEN_REG_FILE = REFERENCE_REGIONS_DIR / "Even_traces_mask_reg.fits"
+    profile.ODD_REG_FILE = REFERENCE_REGIONS_DIR / "Odd_traces_mask_reg.fits"
+    #profile.EVEN_REG_FILE = profile.REGIONS_DIR / "Even_traces_mask_reg.fits"
+    #profile.ODD_REG_FILE = profile.REGIONS_DIR / "Odd_traces_mask_reg.fits"
 
     # Calibration references
     profile.FILTER_R = REFERENCE_FILTERS_DIR / NAME_FILTER_R
@@ -305,32 +359,86 @@ def build_config(profile):
     profile.SCI_ODD_TRACECOORDS = profile.ST06_SCIENCE / science_tracecoords_name(profile.TARGET_FILE_STEM, "ODD")
 
     profile.MASTER_ARC_DIFF = profile.ST07_WAVECAL / NAME_MASTER_ARC_DIFF
+    profile.MASTER_ARC_DIFF_PIXFLATCORR_CLIPPED = profile.ST07_WAVECAL / NAME_MASTER_ARC_DIFF_PIXFLATCORR_CLIPPED
     profile.MASTER_ARC_FITS = profile.ST07_WAVECAL / NAME_MASTER_ARC
     profile.WAVESOL_FITS = profile.ST07_WAVECAL / NAME_WAVESOL
     profile.WAVESOL_ALL_FITS = profile.ST07_WAVECAL / NAME_WAVESOL_ALL
     profile.SHIFT2M_TABLE = profile.ST07_WAVECAL / NAME_SHIFT2M_TABLE
     profile.ARC_1D_WAVELENGTH_ALL = profile.ST07_WAVECAL / NAME_ARC_1D_WAVELENGTH_ALL
-
+    if hasattr(profile, "WAVESHIFT_TABLE"):
+        profile.MANUAL_WAVESHIFT_TABLE = (
+            CALIB_ROOT
+            / "reference_tables"
+            / "wavecal"
+            / profile.WAVESHIFT_TABLE
+        )
+    else:
+        profile.MANUAL_WAVESHIFT_TABLE = None
+        
     profile.EXTRACT1D_EVEN = profile.ST08_EXTRACT1D / NAME_EXTRACT1D_EVEN
     profile.EXTRACT1D_ODD = profile.ST08_EXTRACT1D / NAME_EXTRACT1D_ODD
     profile.EXTRACT1D_ALL = profile.ST08_EXTRACT1D / NAME_EXTRACT1D_ALL
     profile.EXTRACT1D_WAV = profile.ST08_EXTRACT1D / NAME_EXTRACT1D_WAV
 
-    profile.EXTRACT1D_OHCLEAN = profile.ST09_OH_REFINE / NAME_EXTRACT1D_OHCLEAN
+
+    profile.EXTRACT1D_OHREF= profile.ST09_OH_REFINE / NAME_EXTRACT1D_OHREF
 
     profile.TELLURIC_TEMPLATE = profile.ST10_TELLURIC / NAME_TELLURIC_TEMPLATE
     profile.EXTRACT1D_TELLCOR = profile.ST10_TELLURIC / NAME_EXTRACT1D_TELLCOR
 
     profile.STEP11_INPUT_SPECTRA = profile.EXTRACT1D_TELLCOR
+    profile.STEP11_RADEC = profile.ST11_FLUXCAL / NAME_STEP11_RADEC
+    profile.STEP11_PHOTCAT = profile.ST11_FLUXCAL / NAME_STEP11_PHOTCAT
     profile.EXTRACT1D_FLUXCAL = profile.ST11_FLUXCAL / NAME_EXTRACT1D_FLUXCAL
     profile.FLUXCAL_SUMMARY_CSV = profile.ST11_FLUXCAL / NAME_FLUXCAL_SUMMARY_CSV
     profile.MASTER_RESPONSE_FITS = profile.ST11_FLUXCAL / NAME_MASTER_RESPONSE_FITS
+    profile.STEP11_SUMMARY_CSV = profile.ST11_FLUXCAL / NAME_STEP11_SUMMARY_CSV
+    profile.STEP11_QA_PNG = profile.ST11_FLUXCAL / NAME_STEP11_QA_PNG
+    profile.STEP11_CONTINUUM_SNR_CSV = profile.ST11_FLUXCAL / NAME_STEP11_CONTINUUM_SNR_CSV
 
-    profile.STEP12B_INPUT_SPECTRA = profile.EXTRACT1D_FLUXCAL
-    profile.ILLUM1D_PROFILE_EVEN = profile.ST12_FINALCAL / NAME_ILLUM1D_PROFILE_EVEN
-    profile.ILLUM1D_PROFILE_ODD = profile.ST12_FINALCAL / NAME_ILLUM1D_PROFILE_ODD
-    profile.EXTRACT1D_ILLUMCORR = profile.ST12_FINALCAL / NAME_EXTRACT1D_ILLUMCORR
+
+    # Step12 active stellar-response refinement
+    #====================================================
+    #profile.EXTRACT1D_STEP12_INPUT = profile.ST11_FLUXCAL / NAME_EXTRACT1D_STEP12_INPUT
+    
+    # Backward-compatible alias while notebooks/scripts are updated
+    #profile.EXTRACT1D_STEP12C_INPUT = profile.EXTRACT1D_STEP12_INPUT
+
     profile.EXTRACT1D_FINALCAL = profile.ST12_FINALCAL / NAME_EXTRACT1D_FINALCAL
+    #profile.EXTRACT1D_FINALCAL_STELLARRESP = profile.EXTRACT1D_FINALCAL
+    profile.EXTRACT1D_FINALCAL_STELLARRESP = profile.ST12_FINALCAL / NAME_EXTRACT1D_FINALCAL_STELLARRESP
+    profile.EXTRACT1D_STEP12_INPUT = profile.EXTRACT1D_FLUXCAL
+    profile.ILLUM_PROFILE_EVEN = profile.ST12_FINALCAL / NAME_STEP12_ILLUM_PROFILE_EVEN
+    profile.ILLUM_PROFILE_ODD = profile.ST12_FINALCAL / NAME_STEP12_ILLUM_PROFILE_ODD
+    
+    profile.STEP12D_DIR = profile.ST12_FINALCAL / NAME_STEP12D_DIR
+    profile.STEP12_MASTER_RESPONSE = profile.ST12_FINALCAL / NAME_STEP12_MASTER_RESPONSE
+    profile.STEP12_PHOTCAT = profile.ST11_FLUXCAL / NAME_STEP11_PHOTCAT
+    
+    profile.STEP12D_DIR = profile.ST12_FINALCAL / NAME_STEP12D_DIR
+    profile.STEP12D_MASTER = profile.STEP12D_DIR / NAME_STEP12D_MASTER
+    profile.STEP12D_MASTER_FITS = profile.STEP12D_DIR / NAME_STEP12D_MASTER_FITS
+    profile.STEP12D_METADATA_JSON = profile.STEP12D_DIR / NAME_STEP12D_METADATA_JSON
+    profile.STEP12D_PER_SLIT = profile.STEP12D_DIR / NAME_STEP12D_PER_SLIT
+    profile.STEP12D_PER_SLIT_FITS = profile.STEP12D_DIR / NAME_STEP12D_PER_SLIT_FITS
+    profile.STEP12D_SUMMARY_CSV = profile.STEP12D_DIR / NAME_STEP12D_SUMMARY_CSV
+    profile.STEP12D_SUMMARY = profile.STEP12D_DIR / NAME_STEP12D_SUMMARY
+    #profile.STEP12D_SUMMARY_CSV = profile.STEP12D_DIR / NAME_STEP12D_SUMMARY_CSV
+
+    profile.QC12_DIR = profile.QC_DIR / "12_finalcal"
+    
+    profile.QC_STEP12_FINAL_MOSAIC_PDF = profile.QC12_DIR / NAME_STEP12_FINAL_MOSAIC_PDF
+    profile.QC_STEP12_SUMMARY_PDF = profile.QC12_DIR / NAME_QC_STEP12_SUMMARY_PDF
+    profile.QC_STEP12D_RESPONSE_PDF = profile.QC12_DIR / NAME_QC_STEP12D_RESPONSE_PDF
+    profile.QC_STEP12DE_COMPREHENSIVE_PDF = profile.QC12_DIR / NAME_QC_STEP12DE_COMPREHENSIVE_PDF
+
+    profile.EXTRACT1D_OHCLEAN = (
+        profile.ST09
+        / "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus.fits"
+    )
+    #profile.EXTRACT1D_OHCLEAN = profile.EXTRACT1D_STEP09_CONSENSUS
+    
+    
     
     required = [
         "EXTRACT1D_WAV",

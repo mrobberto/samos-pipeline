@@ -36,6 +36,22 @@ MAINTENANCE NOTES
     EXTRACT1D_FLUXCAL
 - Avoid adding target-specific filesystem logic here; that belongs in the
   active target configuration profile.
+  
+To run: 
+    a) Smoketest
+PYTHONPATH=. python drivers/run_pipeline.py \
+  --from-step 04 \
+  --to-step 12e \
+  --dry-run \
+  --verbose
+  
+  b) Full run
+PYTHONPATH=. python drivers/run_pipeline.py \
+  --from-step 04 \
+  --to-step 12e \
+  --run-qc \
+  --verbose
+  
 """
 from __future__ import annotations
 
@@ -84,7 +100,7 @@ SCRIPT_REGISTRY: tuple[Stage, ...] = (
     Stage("05",   "pipeline/step05_pixflat/step05_build_pixflat.py",                "Build pixel flat from quartz differences",        sets=("EVEN", "ODD"), args_template="--set {set}"),
     Stage("06a",  "pipeline/step06_science_rectify/step06a_make_final_science.py",  "Build FinalScience mosaic"),
     Stage("06b",  "pipeline/step06_science_rectify/step06b_apply_pixflat_clip.py",  "Apply pixel flat to FinalScience",                sets=("EVEN", "ODD"), args_template="--traceset {set}"),
-    Stage("06c",  "pipeline/step06_science_rectify/step06c_rectify_tracecoords.py", "Rectify slitlets into TRACECOORDS",               sets=("EVEN", "ODD"), args_template="--traceset {set}"),
+    Stage("06c",  "pipeline/step06_science_rectify/step06c_TRACECOORDS_representation.py", "Rectify slitlets into TRACECOORDS",        sets=("EVEN", "ODD"), args_template="--traceset {set}"),
     Stage("07a",  "pipeline/step07_wavecal/step07a_make_arc_diff.py",               "Build arc-difference frame"),
     Stage("07b",  "pipeline/step07_wavecal/step07b_apply_pixflat_arc.py",           "Apply pixel flat to arc frame"),
     Stage("07c",  "pipeline/step07_wavecal/step07c_extract_arc_1d.py",              "Extract rectified 1D arc slit spectra",           sets=("EVEN", "ODD"), args_template="--traceset {set}"),
@@ -93,7 +109,14 @@ SCRIPT_REGISTRY: tuple[Stage, ...] = (
     Stage("07f",  "pipeline/step07_wavecal/step07f_build_master_arc.py",            "Build aligned master arc"),
     Stage("07g",  "pipeline/step07_wavecal/step07g_solve_wavelength.py",            "Fit global wavelength solution"),
     Stage("07h",  "pipeline/step07_wavecal/step07h_propagate_wavesol.py",           "Propagate wavelength solution to all slit arcs"),
-    Stage("08a",  "pipeline/step08_extract1d/step08a_extract_1d.py",                "Ridge-guided optimal extraction",                 sets=("EVEN", "ODD"), args_template="--set {set}"),
+    Stage("07i",   "pipeline/step07_wavecal/step07i_apply_manual_waveshifts.py",    "Apply optional manual slit wavelength zero-point shifts" ),
+    Stage("08a1", "pipeline/step08_extract1d/step08a1_trace_analysis.py",
+          "Trace analysis, ridge detection, and slit classification",
+          sets=("EVEN", "ODD"), args_template="--set {set}"),
+    
+    Stage("08a2", "pipeline/step08_extract1d/step08a2_extract_1d.py",
+          "Ridge-guided optimal extraction",
+          sets=("EVEN", "ODD"), args_template="--set {set}"),
     Stage("08b",  "pipeline/step08_extract1d/step08b_merge_even_odd.py",            "Merge EVEN and ODD extracted spectra"),
     Stage("08c",  "pipeline/step08_extract1d/step08c_attach_wavelength.py",         "Attach wavelength vectors to extracted spectra"),
     Stage("09",   "pipeline/step09_oh_refine/step09_abab_driver.py",                "Full OH cleanup and preferred-spectrum selection (A/B/A/B)"),
@@ -101,10 +124,12 @@ SCRIPT_REGISTRY: tuple[Stage, ...] = (
     Stage("10b",  "pipeline/step10_telluric/step10b_apply_telluric.py",             "Apply O2 telluric correction"),
     Stage("11a",  "pipeline/step11_fluxcal/step11a_extract_header_radec_resilient.py", "Extract RA/DEC and slit metadata"),
     Stage("11b",  "pipeline/step11_fluxcal/step11b_query_skymapper.py",             "Query SkyMapper photometry"),
-    Stage("11c",  "pipeline/step11_fluxcal/step11c_fluxcal.py",                   "Apply photometric flux calibration"),
-    Stage("12a", "pipeline/step12_finalcal/step12a_build_illum_profile.py",         "Build 1D illumination profiles"),
-    Stage("12b", "pipeline/step12_finalcal/step12b_apply_illum_profile.py",         "Apply 1D illumination correction"),
-    Stage("12c", "pipeline/step12_finalcal/step12c_refine_fluxcal.py",              "Refine flux calibration against SkyMapper photometry"),
+    Stage("11c",  "pipeline/step11_fluxcal/step11c_fluxcal.py",                     "Apply photometric flux calibration"),
+#    Stage("12a", "pipeline/step12_finalcal/step12a_build_illum_profile.py",         "Build 1D illumination profiles"),
+#    Stage("12b", "pipeline/step12_finalcal/step12b_apply_illum_profile.py",         "Apply 1D illumination correction"),
+#
+    Stage("12d", "pipeline/step12_finalcal/step12d_build_stellar_response.py",      "Build ensemble stellar-response correction"),
+    Stage("12e", "pipeline/step12_finalcal/step12e_apply_stellar_response.py",      "Apply ensemble stellar-response correction"),
 )
 
 # -----------------------------------------------------------------------------
@@ -140,16 +165,19 @@ OUTPUT_CHECKS: dict[str, tuple[str, ...]] = {
     "07a": ("MASTER_ARC_DIFF",),
     "07g": ("WAVESOL_ALL_FITS",),
     "07h": ("ARC_1D_WAVELENGTH_ALL",),
-    "08a": ("EXTRACT1D_EVEN", "EXTRACT1D_ODD"),
+    "07i": ("ARC_WAVELENGTH_ACTIVE",),
+    "08a2": ("EXTRACT1D_EVEN", "EXTRACT1D_ODD"),
     "08b": ("EXTRACT1D_ALL",),
     "08c": ("EXTRACT1D_WAV",),
     "09":  ("EXTRACT1D_OHCLEAN",),
     "10a": ("TELLURIC_TEMPLATE",),
     "10b": ("EXTRACT1D_TELLCOR",),
     "11c": ("EXTRACT1D_FLUXCAL", "FLUXCAL_SUMMARY_CSV"),
-    "12a": ("ILLUM1D_PROFILE_EVEN", "ILLUM1D_PROFILE_ODD"),
-    "12b": ("EXTRACT1D_ILLUMCORR",),
-    "12c": ("EXTRACT1D_FINALCAL", "STEP12C_SUMMARY_CSV"),
+#    "12a": ("ILLUM1D_PROFILE_EVEN", "ILLUM1D_PROFILE_ODD"),
+#    "12b": ("EXTRACT1D_ILLUMCORR",),
+#    "12c": ("EXTRACT1D_FINALCAL", "STEP12C_SUMMARY_CSV"),
+    "12d": ("STEP12D_MASTER_FITS", "STEP12D_SUMMARY_CSV"),
+    "12e": ("QC_STEP12D_RESPONSE_PDF",),
 }
 
 
@@ -387,7 +415,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--repo-root", type=str, default=str(Path(__file__).resolve().parents[1]))
     ap.add_argument("--config", type=str, default="config.target_config")
     ap.add_argument("--from-step", type=str, default="04")
-    ap.add_argument("--to-step", type=str, default="12c")
+    ap.add_argument("--to-step", type=str, default="12e")
     ap.add_argument("--only", nargs="*", default=None)
     ap.add_argument("--set", type=str, default="ALL")
     ap.add_argument("--run-qc", action="store_true")
@@ -506,16 +534,16 @@ def main() -> int:
                     elif qc_str.endswith("qc/step09/qc_step09_final_mosaic.py"):
                         root = cfg_module.ST09
                         qc_args = [
-                            "--infile", str(cfg_module.EXTRACT1D_OHCLEAN),
+                            "--in", str(cfg_module.EXTRACT1D_OHCLEAN),
                             "--outdir", str(Path(root) / "qc_step09"),
                             "--column", "STELLAR",
                             "--show-pref",
                         ]
-                    
+                                            
                     # --- Step10 closeout QC ---
                     elif qc_str.endswith("qc/step10/qc_step10_final_mosaic.py"):
                         qc_args = [
-                            "--infile", str(cfg_module.EXTRACT1D_TELLCOR),
+                            "--in", str(cfg_module.EXTRACT1D_TELLCOR),
                             "--outdir", str(Path(cfg_module.ST10_TELLURIC) / "qc_step10"),
                             "--column", "FLUX_TELLCOR_O2",
                         ]
@@ -543,7 +571,11 @@ def main() -> int:
                     
                     # --- Generic fallback for set-based QC ---
                     elif set_name is not None:
-                        if qc_str.endswith("qc/step04/qc_step04_trace_quicklooks.py"):
+                        if (
+                            qc_str.endswith("qc/step04/qc_step04_trace_quicklooks.py")
+                            or qc_str.endswith("qc/step06/qc_step06b_inspector_final.py")
+                            or qc_str.endswith("qc/step06/qc_step06c_quicklooks_final.py")
+                        ):
                             qc_args = ["--traceset", set_name]
                         else:
                             qc_args = ["--set", set_name]

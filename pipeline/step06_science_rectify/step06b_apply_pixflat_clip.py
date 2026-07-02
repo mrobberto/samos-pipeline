@@ -125,9 +125,8 @@ def _infer_traceset(name: str) -> str | None:
 def _default_output_name(science_name: str, traceset: str, register_flat: bool) -> str:
     base = science_name[:-5] if science_name.lower().endswith(".fits") else science_name
     if register_flat:
-        return f"{base}_reg_pixflatcorr_clipped_{traceset}.fits"
-    return f"{base}_pixflatcorr_clipped_{traceset}.fits"
-
+        return f"{base}_reg_pixflatcorr_{traceset}.fits"
+    return f"{base}_pixflatcorr_{traceset}.fits"
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()

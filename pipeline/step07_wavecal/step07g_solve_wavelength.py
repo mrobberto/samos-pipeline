@@ -57,6 +57,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Display QC plots interactively in addition to saving PNG files.",
     )
+    ap.add_argument(
+    "--qc-slits",
+    nargs="+",
+    default=None,
+    help="List of slits to plot (e.g. SLIT000 SLIT024 or 0 24 52).",
+)
     return ap.parse_args()
 
 
@@ -140,7 +146,7 @@ QC_SLITS = ["SLIT000", "SLIT024", "SLIT052", "SLIT001", "SLIT029", "SLIT051"]
 QC_XLIM = (740, 830)
 
 LAMBDA_MIN = 575
-LAMBDA_MAX = 950
+LAMBDA_MAX = 975
 
 
 def _as_float_prefix(s: str) -> float:
@@ -295,6 +301,19 @@ def read_shift_to_master(master_fits: Path) -> dict[str, int]:
         raise RuntimeError(f"No SHIFT_TO_MASTER entries found in {master_fits}")
     return out
 
+def normalize_slit_name(s):
+    s = str(s).strip().upper()
+
+    if s == "ALL":
+        return "ALL"
+
+    if s.startswith("SLIT"):
+        digits = "".join(ch for ch in s if ch.isdigit())
+        if digits:
+            return f"SLIT{int(digits):03d}"
+        return s
+
+    return f"SLIT{int(s):03d}"
 
 def main():
     log.info("MASTER_FITS = %s", MASTER_FITS)
@@ -327,6 +346,7 @@ def main():
 
     peaks, props = find_peaks(m_s, prominence=peak_prom, distance=PEAK_DISTANCE)
     prom = props.get("prominences", np.zeros_like(peaks, float))
+    
     idxp = np.argsort(prom)[::-1]
     peaks = peaks[idxp]
 
@@ -344,7 +364,9 @@ def main():
     lines_nm, _lines_I = load_nist_bright_lines(NIST_DIR, nkeep=N_LINES_KEEP, lam_min=LAMBDA_MIN, lam_max=LAMBDA_MAX)
     log.info("Total NIST bright lines used: %d", len(lines_nm))
 
-    peaks_use = np.sort(peaks[: min(N_PEAKS_REFINE, len(peaks))]).astype(float)    
+    peaks_use = np.sort(peaks[: min(N_PEAKS_REFINE, len(peaks))]).astype(float)   
+    
+    """ REMOVE 1
     # --- ADD RED-END PEAKS (manual extension) ---
     extra_red_pixels = np.array([1119, 1038, 692], dtype=float)  # from your identification
     #    
@@ -353,6 +375,9 @@ def main():
     #
     # append
     peaks_use = np.concatenate([peaks_use, extra_red_y])
+    """
+    """ ADD INSTEAD """
+    peaks_use = np.sort(peaks[: min(N_PEAKS_REFINE, len(peaks))]).astype(float)
     
     
     p = None
@@ -361,6 +386,8 @@ def main():
     for it in range(MAX_ITERS):
         lam_pred = (a0 * peaks_use + b0) if p is None else p(peaks_use)
         pick = nearest_lines(lam_pred, lines_nm)
+        
+        """ REMOVE 2
         # --- OVERRIDE red-end peak matches ---
         red_lines_nm = np.array([912.2967, 922.4499, 965.7786])
         #       
@@ -371,6 +398,7 @@ def main():
                 idx = np.where(peaks_use == y)[0][0]
                 if idx < len(red_lines_nm):
                     pick[idx] = red_lines_nm[idx]
+        """            
             
         
         resid = lam_pred - pick
@@ -468,9 +496,17 @@ def main():
     fits.HDUList(hdus).writeto(OUT_GLOBAL, overwrite=True)
     log.info("Wrote: %s", OUT_GLOBAL)
 
-    qc_dir = Path(config.ST07_WAVECAL)
+    qc_dir = Path(config.PRODUCT_ROOT) / "qc" / "07_wavecal" / "07g"
     qc_dir.mkdir(parents=True, exist_ok=True)
-
+    
+    if ARGS.qc_slits:
+        if len(ARGS.qc_slits) == 1 and ARGS.qc_slits[0].upper() == "ALL":
+            qc_slits = sorted(shift_to_master.keys())
+        else:
+            qc_slits = [normalize_slit_name(s) for s in ARGS.qc_slits]
+    else:
+        qc_slits = QC_SLITS
+    
     plt.figure(figsize=(10, 4))
     plt.plot(m_s, lw=1)
     plt.scatter(peaks_use, m_s[peaks_use.astype(int)], s=25, label="peaks used")
@@ -494,7 +530,7 @@ def main():
     plt.figure(figsize=(10, 5))
     plotted = 0
     arc1d = load_arc1d_flux_map(ARC1D_EVEN, ARC1D_ODD)
-    for s in QC_SLITS:
+    for s in qc_slits:
         s = s.strip().upper()
         if s not in arc1d or s not in shift_to_master:
             continue

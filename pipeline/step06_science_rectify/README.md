@@ -6,9 +6,11 @@ Prepare science data for spectral extraction by:
 
 1. Combining individual exposures into a science mosaic
 2. Applying pixel-flat correction
-3. Rectifying slitlets into a common coordinate system (**TRACECOORDS**)
+3. OPTIONAL: Rectify slitlets into a common coordinate system (**TRACECOORDS**)
 
-This step produces the **rectified 2D slit spectra** used in wavelength calibration and extraction.
+This step provides an optional rectified representation (TRACECOORDS) 
+useful for visualization, quality control, and some analysis tasks.
+The core pipeline operates in detector coordinates.
 
 ---
 
@@ -115,7 +117,7 @@ FinalScience_<target>_pixflatcorr_clipped_ODD.fits
 
 ---
 
-### Step06c — slit rectification (TRACECOORDS)
+### OPTIONAL: Step06c — slit rectification (TRACECOORDS)
 
 * Use Step04 geometry (polynomial slit model)
 * Map curved slit traces → rectangular slit frames
@@ -214,14 +216,14 @@ runfile("step06_science_rectify/step06a_make_final_science.py")
 runfile("step06_science_rectify/step06b_apply_pixflat_clip.py", args="--traceset EVEN")
 runfile("step06_science_rectify/step06b_apply_pixflat_clip.py", args="--traceset ODD")
 
-runfile("step06_science_rectify/step06c_rectify_tracecoords.py")
+runfile("step06_science_rectify/step06c_TRACECOORDS_representation.py")
 ```
 
 ---
 
 ## Notes
 
-* Step06c output is the **primary input for Step08 (extraction)**
+* Step06c is an optional step
 * No spectral centering or shifting is performed here
 * Geometry from Step04 is strictly preserved
 
@@ -242,7 +244,7 @@ runfile("step06_science_rectify/step06c_rectify_tracecoords.py")
 ```text
 Step04 → trace geometry
 Step05 → pixel flat
-Step06 → science preparation (rectification)
+Step06 → science preparation 
 Step07 → wavelength calibration
 Step08 → spectral extraction
 ```

@@ -31,7 +31,8 @@ import numpy as np
 from astropy.io import fits
 
 import config
-
+QC_DIR = Path(config.PRODUCT_ROOT) / "qc" / "07_wavecal" / "07g"
+QC_DIR.mkdir(parents=True, exist_ok=True)
 
 QC_SLITS_DEFAULT = ["SLIT000", "SLIT024", "SLIT052", "SLIT001", "SLIT029", "SLIT051"]
 QC_XLIM_DEFAULT = (740, 830)
@@ -123,7 +124,7 @@ def main(argv=None):
                     help="Override Step07c EVEN arc1d MEF")
     ap.add_argument("--arc1d-odd", type=str, default=None,
                     help="Override Step07c ODD arc1d MEF")
-    ap.add_argument("--save-prefix", type=str, default=None,
+    ap.add_argument("--save-prefix", type=str, default=QC_DIR,
                     help="Optional prefix for saving PNGs")
     ap.add_argument("--show-plots", action="store_true",
                     help="Show plots interactively (off by default)")

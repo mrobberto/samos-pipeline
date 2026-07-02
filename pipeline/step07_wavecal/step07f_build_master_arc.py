@@ -92,44 +92,31 @@ def list_slit_extnames(h: fits.HDUList) -> list[str]:
 def slit_num(s: str) -> int:
     return int(s.replace("SLIT", ""))
 
+from astropy.table import Table
 
-def read_shifts_csv(csv_path: Path) -> pd.DataFrame:
+def read_shifts_fits(fits_path: Path) -> pd.DataFrame:
     """
-    Read Arc_shifts_final CSV and return standardized dataframe with:
-      SLIT (upper), SHIFT_FINAL (int), plus original columns preserved.
+    Read Step07e refined-shift FITS table and return standardized dataframe.
     """
-    df = pd.read_csv(csv_path)
-    nmap = {norm_col(c): c for c in df.columns}
 
-    slit_col = None
-    for cand in ["slit", "extname", "slitid"]:
-        if cand in nmap:
-            slit_col = nmap[cand]
-            break
-    if slit_col is None:
-        raise RuntimeError(f"Missing SLIT column in {csv_path}. Columns={list(df.columns)}")
+    tab = Table.read(fits_path)
 
-    shift_col = None
-    for cand in [
-        "shiftfinal",
-        "shiftf",
-        "shift",
-        "shift0",
-        "shiftvsrefpx",
-        "shiftvsref",
-        "dy",
-        "dely",
-    ]:
-        if cand in nmap:
-            shift_col = nmap[cand]
-            break
-    if shift_col is None:
-        raise RuntimeError(f"Missing SHIFT column in {csv_path}. Columns={list(df.columns)}")
+    cols = {c.lower(): c for c in tab.colnames}
 
-    df2 = df.copy()
-    df2["SLIT"] = df2[slit_col].astype(str).str.upper()
-    df2["SHIFT_FINAL"] = np.round(df2[shift_col].astype(float)).astype(int)
-    return df2
+    slit_col = cols.get("slit", "SLIT")
+    shift_col = (
+        cols.get("shift_final")
+        or cols.get("shiftfinal")
+        or "SHIFT_FINAL"
+    )
+
+    df = pd.DataFrame({
+        "SLIT": [str(x).strip().upper() for x in tab[slit_col]],
+        "SHIFT_FINAL": np.asarray(tab[shift_col], dtype=int),
+    })
+
+    return df
+
 
 
 def robust_valid_region(npix: np.ndarray, frac: float = 0.5) -> np.ndarray:
@@ -173,7 +160,7 @@ def default_arc1d_path(trace_set: str) -> Path:
 
 def build_aligned_stack(
     arc1d_fits: Path,
-    shifts_csv: Path,
+    shift_fits: Path,
     set_name: str,
     min_coverage_frac: float = 0.5,
     edge_pad: int = 0,
@@ -184,7 +171,7 @@ def build_aligned_stack(
       coverage: (n_pix,) number of finite contributors per pixel
       meta: list of dicts per slit in stack order
     """
-    df = read_shifts_csv(shifts_csv)
+    df = read_shifts_fits(shift_fits)
     shift_map = {r.SLIT: int(r.SHIFT_FINAL) for r in df.itertuples(index=False)}
 
     with fits.open(arc1d_fits) as h:
@@ -201,7 +188,7 @@ def build_aligned_stack(
 
         for slit in slits:
             if slit not in shift_map:
-                print(f"[WARN] No shift for {slit} in {shifts_csv.name}; skipping")
+                print(f"[WARN] No shift for {slit} in {shift_fits.name}; skipping")
                 continue
 
             flux = np.asarray(h[slit].data[0], float)
@@ -226,7 +213,7 @@ def build_aligned_stack(
             meta_rows.append({"SLIT": slit, "SET": set_name, "SHIFT_FINAL": sh})
 
     if not stack_rows:
-        raise RuntimeError(f"No usable slits built from {arc1d_fits} with {shifts_csv}")
+        raise RuntimeError(f"No usable slits built from {arc1d_fits} with {shift_fits}")
 
     stack = np.vstack(stack_rows).astype(np.float32)
     coverage = np.sum(np.isfinite(stack), axis=0).astype(np.int32)
@@ -266,7 +253,9 @@ def main(argv: list[str] | None = None) -> None:
 
     if do_even:
         arc1d_even = Path(args.arc1d_even).expanduser() if args.arc1d_even else default_arc1d_path("EVEN")
-        shifts_even = Path(args.shifts_even).expanduser() if args.shifts_even else (wavecal_dir / "Arc_shifts_final_EVEN.csv")
+        shifts_even = Path(args.shifts_even).expanduser() if args.shifts_even else (
+            wavecal_dir / "arc_shift_final_EVEN.fits"
+        )
         if not arc1d_even.exists():
             raise FileNotFoundError(arc1d_even)
         if not shifts_even.exists():
@@ -274,7 +263,9 @@ def main(argv: list[str] | None = None) -> None:
 
     if do_odd:
         arc1d_odd = Path(args.arc1d_odd).expanduser() if args.arc1d_odd else default_arc1d_path("ODD")
-        shifts_odd = Path(args.shifts_odd).expanduser() if args.shifts_odd else (wavecal_dir / "Arc_shifts_final_ODD.csv")
+        shifts_odd = Path(args.shifts_odd).expanduser() if args.shifts_odd else (
+            wavecal_dir / "arc_shift_final_ODD.fits"
+        )
         if not arc1d_odd.exists():
             raise FileNotFoundError(arc1d_odd)
         if not shifts_odd.exists():
@@ -382,10 +373,10 @@ def main(argv: list[str] | None = None) -> None:
     phdr["SHFTGLOB"] = (int(d_global), "Global shift of ODD aligned stack to match EVEN master")
     if do_even:
         phdr["ARC1DEVN"] = (arc1d_even.name, "Input EVEN 1D arc file")
-        phdr["SHFTEVN"] = (shifts_even.name, "Input EVEN refined shifts CSV")
+        phdr["SHFTEVN"] = (shifts_even.name, "Input EVEN refined shifts FITS")
     if do_odd:
         phdr["ARC1DODD"] = (arc1d_odd.name, "Input ODD 1D arc file")
-        phdr["SHFTODD"] = (shifts_odd.name, "Input ODD refined shifts CSV")
+        phdr["SHFTODD"] = (shifts_odd.name, "Input ODD refined shifts FITS")
 
     hdus = [
         fits.PrimaryHDU(master_median, header=phdr),

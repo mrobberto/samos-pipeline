@@ -7,6 +7,11 @@ Pipeline meaning
 ----------------
   Step09 = OH refine
   Step10 = telluric
+  
+PYTHONPATH=. python pipeline/step10_telluric/step10b_apply_telluric.py \
+  --infile ../_Run8_Science_2026_01/SAMI/Dolidze25/reduced/09_abab/extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus.fits \
+  --template ../_Run8_Science_2026_01/SAMI/Dolidze25/reduced/10_telluric/telluric_O2_template.fits \
+  --outfile ../_Run8_Science_2026_01/SAMI/Dolidze25/reduced/10_telluric/extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus_tellcorr.fits  
 """
 
 from __future__ import annotations
@@ -55,6 +60,22 @@ DEFAULT_INFILE = Path(
         Path(config.ST09_OH_REFINE) / "extract1d_optimal_ridge_all_wav_ohclean.fits",
     )
 )
+DEFAULT_INFILE = Path(
+    getattr(
+        config,
+        "EXTRACT1D_STEP09_CONSENSUS",
+        Path(config.ST09_OH_REFINE)
+        / "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus.fits",
+    )
+)
+DEFAULT_OUTFILE = Path(
+    getattr(
+        config,
+        "EXTRACT1D_TELLCOR",
+        ST10 / "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus_tellcorr.fits",
+    )
+)
+
 DEFAULT_TEMPLATE = Path(
     getattr(
         config,
@@ -62,27 +83,27 @@ DEFAULT_TEMPLATE = Path(
         ST10 / "telluric_O2_template.fits",
     )
 )
-DEFAULT_OUTFILE = Path(
-    getattr(
-        config,
-        "EXTRACT1D_TELLCOR",
-        ST10 / "extract1d_optimal_ridge_all_wav_ohclean_tellcorr.fits",
-    )
-)
 
 A_CONT_L = (750.5, 758.0)
 A_CONT_R = (770.5, 774.5)
-B_CONT_L = (680.5, 684.5)
-B_CONT_R = (696.5, 701.0)
-SHIFT_NM_GRID_A = np.linspace(-2.0, +2.0, 162)
-SHIFT_NM_GRID_B = np.linspace(-2.0, +2.0, 162)
-B_LO, B_HI = 682.0, 692.0
-A_LO, A_HI = 752.5, 768.5
+B_CONT_L = (678.0, 684.0)
+B_CONT_R = (694.0, 704.0)
+SHIFT_NM_GRID_A = np.linspace(-6.0, +6.0, 481)
+SHIFT_NM_GRID_B = np.linspace(-4.0, +4.0, 321)
 USE_CONTINUUM_TWEAK = False
 T_MIN, T_MAX = 0.02, 1.5
-TAU_MIN_FRAC = 0.05
+TAU_MIN_FRAC = 0.02
 TAU_WEIGHT_POWER = 2.0
-TAU_WEIGHT_POWER = 2.0
+A_LO, A_HI = 748.0, 772.0
+B_LO, B_HI = 680.0, 695.0
+B_CONT_L = (678.0, 684.0)
+B_CONT_R = (694.0, 704.0)
+
+A_CORE_WEIGHT = 4.0
+A_RED_WING_WEIGHT = 0.4
+A_CORE_RANGE = (759.5, 762.5)
+A_RED_WING_RANGE = (764.0, 772.0)
+
 
 
 def finite(x):
@@ -92,7 +113,8 @@ def finite(x):
 def pick_flux_column(cols):
     cols_u = {c.upper(): c for c in cols}
     preferred = [
-        "STELLAR",          # canonical Step09 merged science column
+        "STELLAR_CONSENSUS",
+        "STELLAR",
         "OBJ_SKYSUB",
         "OBJ_RAW",
         "FLUX_ADU_S",
@@ -143,14 +165,26 @@ def fit_one_window_weighted(lam, flux_norm, tau_lam, tau_tau, lo, hi, shift_nm):
         return None
     tau_norm = tau / tau_pk
     inband = finite(tau_norm) & (tau_norm > TAU_MIN_FRAC)
-    if inband.sum() < 20:
+    if inband.sum() < 10:
         return None
     x = x[inband]
     y = y[inband]
     tau = tau[inband]
     tau_norm = tau_norm[inband]
     x0 = np.nanmedian(x)
+    
     w = np.clip(np.clip(tau_norm, 0.0, 1.0) ** TAU_WEIGHT_POWER, 1e-4, None)
+
+    # Extra metric weighting for the O2 A-band:
+    # lock the fit to the sharp core and downweight the broad red-side residuals.
+    if 748.0 <= lo <= 752.0 and 768.0 <= hi <= 774.0:
+        core = (x > A_CORE_RANGE[0]) & (x < A_CORE_RANGE[1])
+        red_wing = (x > A_RED_WING_RANGE[0]) & (x < A_RED_WING_RANGE[1])
+    
+        w[core] *= A_CORE_WEIGHT
+        w[red_wing] *= A_RED_WING_WEIGHT
+    
+    
     if USE_CONTINUUM_TWEAK:
         X = np.vstack([np.ones_like(x), (x - x0), -tau]).T
         beta = weighted_lstsq(y, X, w)
@@ -186,12 +220,40 @@ def fit_cont_sidebands(lam, flux, side_left, side_right):
 
 
 def normalize_band_local(lam, flux, band_lo, band_hi, side_left, side_right):
+    """
+    Fit a local linear continuum using sidebands, then divide the spectrum by it.
+    The normalized spectrum is used only for fitting the telluric template.
+    The final correction is still applied multiplicatively to the original flux.
+    """
     cont = fit_cont_sidebands(lam, flux, side_left, side_right)
-    m = np.isfinite(lam) & np.isfinite(flux) & np.isfinite(cont) & (cont > 0) & (lam > band_lo) & (lam < band_hi)
+
+    m = (
+        np.isfinite(lam)
+        & np.isfinite(flux)
+        & np.isfinite(cont)
+        & (cont != 0)
+        & (lam > band_lo)
+        & (lam < band_hi)
+    )
+
     if m.sum() < 5:
         return np.array([]), np.array([])
-    return lam[m], (flux[m] / cont[m])
 
+    fnorm = flux[m] / cont[m]
+
+    # remove remaining scalar offset so the local continuum is near unity
+    edge = (
+        ((lam[m] < band_lo + 0.20 * (band_hi - band_lo)) |
+         (lam[m] > band_hi - 0.20 * (band_hi - band_lo)))
+        & np.isfinite(fnorm)
+    )
+
+    if edge.sum() >= 5:
+        scale = np.nanmedian(fnorm[edge])
+        if np.isfinite(scale) and scale != 0:
+            fnorm = fnorm / scale
+
+    return lam[m], fnorm
 
 def build_transmission_decoupled(lam, shift_A, a_A, shift_B, a_B, lamA, tauA, lamB, tauB):
     T = np.ones_like(lam, dtype=float)
@@ -217,10 +279,79 @@ def best_band_solution(lam_obs, fnorm, lamT, tauT, lo, hi, shift_grid):
             continue
         if (best is None) or (fit["wrms"] < best["obj"]):
             best = {"obj": float(fit["wrms"]), "fit": fit, "shift": float(sh), "a": float(fit["a"]), "n": int(fit["n"]), "w_sum": float(fit["w_sum"])}
-    if best is None or abs(best["shift"]) >= 0.95 * shift_max:
+    if best is None:
         return None
     return best
 
+def best_band_solution_grid_metric(lam_obs, fnorm, lamT, tauT, shift_grid, a_grid, band="A"):
+    if lam_obs.size < 20:
+        return None
+
+    weight = np.ones_like(lam_obs, dtype=float)
+
+    if band.upper() == "A":
+        weight[(lam_obs > 759.5) & (lam_obs < 762.5)] = 4.0
+        weight[(lam_obs > 764.0) & (lam_obs < 772.0)] = 0.4
+    
+    elif band.upper() == "B":
+        # O2 B-band: emphasize the coherent absorption core,
+        # but do not chase noisy continuum structure.
+        weight[(lam_obs > 686.6) & (lam_obs < 688.4)] = 4.0
+        weight[(lam_obs > 688.4) & (lam_obs < 691.5)] = 1.5
+        weight[(lam_obs < 685.5) | (lam_obs > 692.0)] = 0.3
+    
+
+    best = None
+
+    for sh in shift_grid:
+        tau = interp_tau(lamT, tauT, lam_obs - sh)
+        if not np.isfinite(tau).any():
+            continue
+
+        for a in a_grid:
+            T = np.exp(-a * tau)
+
+            good = (
+                np.isfinite(fnorm)
+                & np.isfinite(T)
+                & (T > 0.02)
+                & np.isfinite(weight)
+                & (weight > 0)
+            )
+
+            if good.sum() < 40:
+                continue
+
+            corr = fnorm[good] / T[good]
+            med = np.nanmedian(corr)
+
+            if not np.isfinite(med) or med == 0:
+                continue
+
+            corr = corr / med
+            resid = corr - 1.0
+            wg = weight[good]
+
+            obj = np.sqrt(np.nansum(wg * resid**2) / np.nansum(wg))
+
+            if best is None or obj < best["obj"]:
+                best = {
+                    "obj": float(obj),
+                    "shift": float(sh),
+                    "a": float(a),
+                    "n": int(good.sum()),
+                    "w_sum": float(np.nansum(wg)),
+                    "fit": {
+                        "a": float(a),
+                        "c0": 0.0,
+                        "c1": 0.0,
+                        "wrms": float(obj),
+                        "n": int(good.sum()),
+                        "w_sum": float(np.nansum(wg)),
+                    },
+                }
+
+    return best
 
 def add_or_replace_column(tab, name, data, fmt="E"):
     name_u = name.upper()
@@ -268,6 +399,8 @@ def main():
     out_hdus[0].header["SRCFILE"] = infile.name
     out_hdus[0].header["TEMPLATE"] = template.name
     out_hdus[0].header["TELLCOR"] = "O2_ABDECW"
+    out_hdus[0].header["AWRCORE"] = (float(A_CORE_WEIGHT), "Step10 A-band core fit weight")
+    out_hdus[0].header["AWRRED"] = (float(A_RED_WING_WEIGHT), "Step10 A-band red-wing fit weight")
     
     n_seen = n_written = n_ok = n_fail = n_varcorr = n_okA = n_okB = n_okAB = 0
     with fits.open(infile) as hdul:
@@ -286,8 +419,57 @@ def main():
             var = np.asarray(d[var_col], float) if var_col is not None else None
             lamA_obs, fnA = normalize_band_local(lam, flux, A_LO, A_HI, A_CONT_L, A_CONT_R)
             lamB_obs, fnB = normalize_band_local(lam, flux, B_LO, B_HI, B_CONT_L, B_CONT_R)
-            solA = best_band_solution(lamA_obs, fnA, lamA, tauA, A_LO, A_HI, SHIFT_NM_GRID_A)
-            solB = best_band_solution(lamB_obs, fnB, lamB, tauB, B_LO, B_HI, SHIFT_NM_GRID_B)
+            solA = best_band_solution_grid_metric(
+                lamA_obs,
+                fnA,
+                lamA,
+                tauA,
+                SHIFT_NM_GRID_A,
+                np.linspace(0.0, 1.5, 241),
+                band="A",
+            )
+                        
+            solB = best_band_solution_grid_metric(
+                lamB_obs,
+                fnB,
+                lamB,
+                tauB,
+                SHIFT_NM_GRID_B,
+                np.linspace(0.0, 1.5, 241),
+                band="B",
+            )
+                        
+            # Reject unphysical negative telluric amplitudes.
+            # Negative amplitude would imply inverse absorption / emission.
+            if solA is not None and solA["a"] <= 0:
+                solA = None
+            
+            if solB is not None and solB["a"] <= 0:
+                solB = None
+            """    
+            # Fallback: if the normal A-band fit fails, retry with looser criteria.
+            # Useful for slits with large wavelength residuals but obvious A-band absorption.
+            if solA is None:
+                solA = best_band_solution(
+                    lamA_obs,
+                    fnA,
+                    lamA,
+                    tauA,
+                    748.0,
+                    772.0,
+                    np.linspace(-8.0, +8.0, 641),
+                )                
+            """
+
+            print(
+                hdu.name,
+                "A:",
+                None if solA is None else (solA["shift"], solA["a"], solA["obj"]),
+                "B:",
+                None if solB is None else (solB["shift"], solB["a"], solB["obj"]),
+            )    
+            
+            
             okA = solA is not None
             okB = solB is not None
 

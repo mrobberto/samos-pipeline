@@ -1,22 +1,83 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Step08a1 — trace analysis and slit-quality classification from TRACECOORDS slit images.
+Step08a1 — TRACECOORDS trace analysis, seed detection, ridge construction, and slit classification.
 
-This stage does NOT perform the final 1D extraction. It:
-- measures a ridge line X0(y)
-- identifies the brightest compact Y-block
-- classifies slit usability for point-source extraction
-- writes an editable CSV table
-- writes a contract-compatible FITS MEF that preserves the columns expected by
-  the existing Step08 QC scripts.
+This stage analyzes each slit in TRACECOORDS coordinates to determine the spatial
+location of the target spectrum and assess slit usability for point-source extraction.
 
-Important design choice
------------------------
-To preserve compatibility with the current Step08 QC scripts, this stage writes
-`extract1d_optimal_ridge_{even,odd}.fits` with the usual table schema, but the
-spectral columns are placeholders at this stage. Step08a2 will read this file
-and overwrite those columns with the real extracted spectra.
+Core operations
+---------------
+For each slit image:
+
+1. Seed detection
+   - Two independent methods are evaluated:
+     • block-based seed: brightest Y-block collapsed in X
+     • patch-based seed: 2D local maximum search on sky-subtracted data
+   - The patch-based seed is preferred when available, as it is more robust
+     against curvature, crowding, and sky-line contamination.
+   - Both seeds are recorded for diagnostic purposes.
+
+2. Ridge construction
+   - Starting from the selected seed (typically patch-based), a ridge line X0(y)
+     is propagated bidirectionally along the dispersion direction.
+   - The search is constrained to remain smooth and local, preventing jumps
+     to neighboring traces or sky features.
+
+3. Slit geometry linkage
+   - TRACECOORDS quantities (X0, TRXLEFT, TRXRIGHT) are preserved and later
+     mapped back to detector coordinates for QC visualization.
+
+4. Slit classification
+   - Each slit is evaluated for usability based on:
+     • signal compactness (FWHM)
+     • offset from slit center
+     • edge proximity
+     • seed detection success
+   - Results are written to an editable CSV table.
+
+Outputs
+-------
+1. FITS MEF file:
+   trace_analysis_optimal_ridge_{even,odd}.fits
+
+   For each slit:
+   - YPIX: TRACECOORDS row index
+   - X0: ridge position (science trace)
+   - TRXLEFT/TRXRIGHT: slit boundaries in TRACECOORDS
+   - placeholder spectral columns (for Step08a2 compatibility)
+
+   Header keywords include:
+   - S08XSED/S08YSED: final seed used for ridge
+   - S08XBLOK/S08YBLOK: block-based seed
+   - S08XPATC/S08YPATC: patch-based seed
+   - S08SMETH: seed method used (PATCH or BLOCK)
+
+2. CSV table:
+   step08a_slit_quality_{even,odd}.csv
+
+   Contains per-slit diagnostics:
+   - SEED_X/Y (final)
+   - BLOCK_X/Y, PATCH_X/Y (diagnostic seeds)
+   - SEED_METHOD
+   - FWHM, CENTER offset, slit edges
+   - classification flags (GOOD, CLASS)
+
+Design notes
+------------
+- This stage operates entirely in TRACECOORDS.
+- No final extraction is performed here.
+- Spectral columns in the FITS output are placeholders to preserve interface
+  compatibility with existing QC and downstream scripts.
+- Step08a2 will perform the optimal extraction and overwrite the spectral columns.
+
+Rationale
+---------
+Separating trace analysis from extraction provides:
+- robust identification of the correct trace before flux measurement
+- explicit QC and manual override capability via the CSV table
+- improved stability in crowded fields and curved-slit geometries
+
 """
 from __future__ import annotations
 
@@ -493,6 +554,89 @@ def make_placeholder_table(ny: int, x0: np.ndarray, apfrac: np.ndarray, edgeflag
     ]
     return fits.BinTableHDU.from_columns(cols)
 
+def find_brightest_seed_patch(img, block_y=20, block_x=3, edge_margin=2):
+    ny, nx = img.shape
+    best = None
+
+    # global background estimate
+    finite = np.isfinite(img)
+    if finite.sum() == 0:
+        return None
+    base = np.nanmedian(img[finite])
+
+    for y0 in range(0, ny, block_y):
+        y1 = min(ny, y0 + block_y)
+
+        for x0 in range(0, nx, block_x):
+            x1 = min(nx, x0 + block_x)
+
+            # avoid slit edges
+            if x0 < edge_margin or x1 > nx - edge_margin:
+                continue
+
+            patch = img[y0:y1, x0:x1]
+
+            vals = patch[np.isfinite(patch)]
+            
+            #if vals.size < 0.5 * patch.size:
+            if vals.size < max(3, 0.2 * patch.size):
+                continue
+
+            # positive signal only
+            w = np.maximum(patch - base, 0.0)
+            w[~np.isfinite(w)] = 0.0
+
+            signal = w.sum()
+            if signal <= 0:
+                continue
+
+            # centroid of signal
+            yy, xx = np.mgrid[y0:y1, x0:x1]
+            xpk = np.sum(xx * w) / signal
+            ypk = np.sum(yy * w) / signal
+            
+            # after xpk, ypk are computed
+            x_center = estimate_trace_center(img)
+            
+            # reject seeds too far from the expected slit center
+            if abs(xpk - x_center) > MAX_CENTER_OFFSET:
+                continue
+            
+            # prefer compact high peaks, not just total flux
+            area = np.sum(w > 0)
+            score = signal / np.sqrt(max(area, 1))
+
+            item = dict(
+                y0=y0, y1=y1,
+                x0=x0, x1=x1,
+                ymid=ypk,
+                xpk=xpk,
+                score=score,
+                peak=np.nanmax(w),
+                width=np.nan,
+                profile=np.nanmedian(img[y0:y1, :], axis=0),
+            )
+            
+            if best is None or item["score"] > best["score"]:
+                best = item
+    print("PATCH DEBUG:",
+         "finite=", finite.sum(),
+         "best=", None if best is None else (best["xpk"], best["ymid"], best["score"]))    
+    return best
+
+def subtract_row_median_sky(img, x_center, half_width=5):
+    ny, nx = img.shape
+    xx = np.arange(nx, dtype=float)
+    resid = np.array(img, dtype=float, copy=True)
+
+    for y in range(ny):
+        row = img[y]
+        m = np.isfinite(row) & (np.abs(xx - x_center) <= half_width)
+        if m.sum() >= 3:
+            resid[y] = row - np.nanmedian(row[m])
+
+    return resid
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
@@ -514,7 +658,21 @@ with fits.open(IN_FITS, memmap=False) as hdul:
             continue
         ny, nx = img.shape
         x_center = estimate_trace_center(img)
-        seed = find_brightest_seed_block(img, block_rows=args.block_rows)
+        resid = subtract_row_median_sky(img, x_center=x_center, half_width=5)
+        
+        seed_block = find_brightest_seed_block(img, block_rows=args.block_rows)
+        
+        seed_patch = find_brightest_seed_patch(
+            resid,
+            block_y=50,
+            block_x=1,
+            edge_margin=2,
+        )
+        
+        # Choose active seed for ridge tracking
+        seed = seed_patch if seed_patch is not None else seed_block
+
+
         good, cls, fwhm, slit_xl, slit_xr, center_x, dx_center = classify_seed_block(seed, img)
         if seed is not None and np.isfinite(seed["xpk"]):
             x_seed = float(seed["xpk"])
@@ -522,9 +680,13 @@ with fits.open(IN_FITS, memmap=False) as hdul:
         else:
             x_seed = float(x_center)
             y_seed = ny // 2
-        if np.isfinite(x_seed) and abs(x_seed - x_center) > float(MAX_CENTER_OFFSET):
+            
+        # Only force back to center if we are using the old block seed.
+        # The patch seed is allowed to be offset because it is the preferred 2D detector.
+        if (seed is seed_block) and np.isfinite(x_seed) and abs(x_seed - x_center) > float(MAX_CENTER_OFFSET):
             x_seed = float(x_center)
         if good:
+            
             x0 = track_rows_bidirectional(img, y_seed, x_seed, x_center)
             # --- NEW: stabilize ridge ---
             x0 = stabilize_ridge_with_global_model(x0, img, frac=0.2, poly_order=2)
@@ -553,6 +715,7 @@ with fits.open(IN_FITS, memmap=False) as hdul:
         tab.header["GAP"] = float(GAP)
         tab.header["S08GOOD"] = (int(bool(good)), "1 if slit passes automatic quality test")
         tab.header["S08CLAS"] = (str(cls), "Automatic slit class")
+        tab.header["S08SMETH"] = ("PATCH" if seed is seed_patch else "BLOCK", "Seed method used")
         
         set_hdr_float_safe(tab.header, "S08FWHM", fwhm, "Brightest-block FWHM")
         set_hdr_float_safe(tab.header, "S08YSED", y_seed, "Seed Y from brightest block")
@@ -563,6 +726,10 @@ with fits.open(IN_FITS, memmap=False) as hdul:
             "Brightest-block compactness score",
         )
         set_hdr_float_safe(tab.header, "S08DXC", dx_center, "Peak minus slit center")
+        set_hdr_float_safe(tab.header, "S08XBLOK", seed_block["xpk"] if seed_block is not None else np.nan, "Block-method seed X")
+        set_hdr_float_safe(tab.header, "S08YBLOK", seed_block["ymid"] if seed_block is not None else np.nan, "Block-method seed Y")
+        set_hdr_float_safe(tab.header, "S08XPATC", seed_patch["xpk"] if seed_patch is not None else np.nan, "Patch-method seed X")
+        set_hdr_float_safe(tab.header, "S08YPATC", seed_patch["ymid"] if seed_patch is not None else np.nan, "Patch-method seed Y")
         
         tab.header["S08BAD"] = (0, "Sky/flux inconsistency flag")
         tab.header["S08EMP"] = (int(cls in {"EMPTY", "NOSEED"}), "1 if slit is empty/no-seed")
@@ -572,15 +739,29 @@ with fits.open(IN_FITS, memmap=False) as hdul:
             "SET": SET_TAG,
             "GOOD": int(bool(good)),
             "CLASS": cls,
+        
+            # final seed
             "SEED_Y": float(y_seed),
             "SEED_X": float(x_seed),
-            "PEAK_X": float(seed["xpk"]) if seed is not None else np.nan,
+            "SEED_METHOD": "PATCH" if seed is seed_patch else "BLOCK",
+        
+            # diagnostics
+            "BLOCK_X": float(seed_block["xpk"]) if seed_block is not None else np.nan,
+            "BLOCK_Y": float(seed_block["ymid"]) if seed_block is not None else np.nan,
+            "PATCH_X": float(seed_patch["xpk"]) if seed_patch is not None else np.nan,
+            "PATCH_Y": float(seed_patch["ymid"]) if seed_patch is not None else np.nan,
+        
+            # optional scoring insight
+            "PATCH_SCORE": float(seed_patch["score"]) if seed_patch is not None else np.nan,
+            "BLOCK_SCORE": float(seed_block["score"]) if seed_block is not None else np.nan,
+        
+            # geometry / quality
             "CENTER_X": float(center_x) if np.isfinite(center_x) else np.nan,
             "DX_CENTER": float(dx_center) if np.isfinite(dx_center) else np.nan,
             "FWHM": float(fwhm) if np.isfinite(fwhm) else np.nan,
             "SLIT_XL": float(slit_xl) if np.isfinite(slit_xl) else np.nan,
             "SLIT_XR": float(slit_xr) if np.isfinite(slit_xr) else np.nan,
-            "SCORE": float(seed["score"]) if seed is not None else np.nan,
+        
             "USE": int(bool(good)),
             "COMMENT": "",
         })

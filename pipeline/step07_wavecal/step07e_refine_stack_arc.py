@@ -60,6 +60,7 @@ import argparse
 import numpy as np
 import pandas as pd
 from astropy.io import fits
+from astropy.table import Table
 
 import config
 
@@ -131,23 +132,28 @@ def default_arc1d_path(trace_set: str) -> Path:
     return st07 / f"ArcDiff_pixflatcorr_clipped_1D_slitid_{trace_set}.fits"
 
 
-def default_shift0_csv(trace_set: str) -> Path:
-    return Path(config.ST07_WAVECAL).expanduser() / f"Arc_shifts_initial_{trace_set}.csv"
+#def default_shift0_csv(trace_set: str) -> Path:
+#    return Path(config.ST07_WAVECAL).expanduser() / f"Arc_shifts_initial_{trace_set}.csv"
 
+def default_shift0_fits(trace_set: str) -> Path:
+    return Path(config.ST07_WAVECAL).expanduser() / f"arc_shift_initial_{trace_set}.fits"
 
+"""
 def infer_refslit_from_shift0(csv_path: Path) -> str:
     df = read_shift0_csv(csv_path)
     zero = df[df["SHIFT0"] == 0]
     if len(zero) >= 1:
         return str(zero.iloc[0]["SLIT"]).upper()
     raise RuntimeError(f"Could not infer reference slit from {csv_path}: no row with SHIFT0 == 0")
+"""
 
 
+"""
 def read_shift0_csv(csv_path: Path) -> pd.DataFrame:
-    """
-    Read Step07d shift CSV and return standardized columns:
-      SLIT, SHIFT0, BRY
-    """
+    
+    #Read Step07d shift CSV and return standardized columns:
+    #  SLIT, SHIFT0, BRY
+    
     import re
     df = pd.read_csv(csv_path)
 
@@ -196,7 +202,17 @@ def read_shift0_csv(csv_path: Path) -> pd.DataFrame:
     out["SHIFT0"] = out["SHIFT0"].round().astype(int)
     out["BRY"] = out["BRY"].round().astype(int)
     return out
+"""
+def read_shift0_fits(path: Path) -> pd.DataFrame:
+    tab = Table.read(path)
 
+    out = pd.DataFrame({
+        "SLIT": [str(x).upper() for x in tab["SLIT"]],
+        "SHIFT0": np.asarray(tab["SHIFT_INITIAL"], dtype=int),
+        "BRY": np.asarray(tab["BRY"], dtype=int),
+    })
+
+    return out
 
 # =============================================================================
 # Main
@@ -220,25 +236,42 @@ def main():
     wavecal_dir = Path(config.ST07_WAVECAL).expanduser()
 
     arc1d_fits = Path(args.arc1d).expanduser() if args.arc1d else default_arc1d_path(trace_set)
-    shift0_csv = Path(args.shift0_csv).expanduser() if args.shift0_csv else default_shift0_csv(trace_set)
+    #shift0_csv = Path(args.shift0_csv).expanduser() if args.shift0_csv else default_shift0_csv(trace_set)
+    shift0_fits = (
+        Path(args.shift0_csv).expanduser()
+        if args.shift0_csv
+        else default_shift0_fits(trace_set)
+    )
 
-    out_csv = Path(args.out_csv).expanduser() if args.out_csv else (wavecal_dir / f"Arc_shifts_final_{trace_set}.csv")
+    if not shift0_fits.exists():
+        raise FileNotFoundError(shift0_fits)
+        
+    df0 = read_shift0_fits(shift0_fits)
+    
+    if args.refslit:
+        refslit = args.refslit.strip().upper()
+    
+    else:
+        zero = df0[df0["SHIFT0"] == 0]
+    
+        if len(zero) < 1:
+            raise RuntimeError(
+                f"Could not infer reference slit from {shift0_fits}: "
+                "no row with SHIFT0 == 0"
+            )
+    
+        refslit = str(zero.iloc[0]["SLIT"]).upper()    
+        
+    #out_csv = Path(args.out_csv).expanduser() if args.out_csv else (wavecal_dir / f"Arc_shifts_final_{trace_set}.csv")
     out_stack = Path(args.out_stack).expanduser() if args.out_stack else (wavecal_dir / f"Arc_stack_aligned_final_{trace_set}.fits")
 
     if not arc1d_fits.exists():
         raise FileNotFoundError(arc1d_fits)
-    if not shift0_csv.exists():
-        raise FileNotFoundError(shift0_csv)
 
-    refslit = args.refslit.strip().upper() if args.refslit else infer_refslit_from_shift0(shift0_csv)
-
-    print("ARC1D_FITS =", arc1d_fits)
-    print("SHIFT0_CSV =", shift0_csv)
-    print("REFSLIT    =", refslit)
-    print("OUT_CSV    =", out_csv)
-    print("OUT_STACK  =", out_stack)
-
-    df0 = read_shift0_csv(shift0_csv)
+        
+    
+    
+    
     shift0 = {r.SLIT: int(r.SHIFT0) for r in df0.itertuples(index=False)}
     bry0 = {r.SLIT: int(r.BRY) for r in df0.itertuples(index=False)}
 
@@ -312,9 +345,30 @@ def main():
             })
 
     df = pd.DataFrame(rows).sort_values("slit", key=lambda s: s.map(slit_num))
-    out_csv.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out_csv, index=False)
-    print("Wrote:", out_csv, f"({len(df)} slits)")
+    #out_csv.parent.mkdir(parents=True, exist_ok=True)
+    #df.to_csv(out_csv, index=False)
+    #print("Wrote:", out_csv, f"({len(df)} slits)")
+    out_shift_fits = (
+        Path(args.out_csv).expanduser()
+        if args.out_csv
+        else wavecal_dir / f"arc_shift_final_{trace_set}.fits"
+    )
+    
+    tab_out = Table.from_pandas(df)
+    
+    out_shift_fits.parent.mkdir(parents=True, exist_ok=True)
+    tab_out.write(out_shift_fits, overwrite=True)
+    print("ARC1D_FITS =", arc1d_fits)
+    print("SHIFT0_FITS =", shift0_fits)
+    print("REFSLIT    =", refslit)
+    print("OUT_SHIFT_FITS    =", out_shift_fits)
+    print("OUT_STACK  =", out_stack)
+
+    
+    print("Wrote:", out_shift_fits, f"({len(df)} slits)")
+
+    
+    
     print(df[["slit", "SHIFT0", "DSHIFT", "SHIFT_FINAL", "CORR", "VALID_FRAC"]]
           .sort_values("CORR").head(10))
 
@@ -337,7 +391,7 @@ def main():
         ph.header["STAGE"] = ("07e", "Pipeline stage")
         ph.header["TRACESET"] = (trace_set, "EVEN/ODD")
         ph.header["ARC1D"] = (Path(arc1d_fits).name, "Source 1D arc MEF")
-        ph.header["SHIFT0"] = (Path(shift0_csv).name, "Input SHIFT0 CSV")
+        ph.header["SHIFT0"] = (Path(shift0_fits).name, "Input SHIFT0 FITS")
         ph.header["REFSLIT"] = (refslit, "Reference slit")
         ph.header["NSLITS"] = (stack.shape[0], "Number of slits (rows)")
         ph.header["NY"] = (stack.shape[1], "Length of 1D spectra (Y pixels)")

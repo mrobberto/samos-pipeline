@@ -138,7 +138,7 @@ def main():
     hdr["ARC_OFF"] = (arc_off.name, "Arc slits-off exposure")
 
     hdr["ARC_ON_P"]  = (str(config.ARC_SLITS_ON),  "Full path to arc ON")
-    hdr["ARC_OFF_P"] = (str(config.ARC_SLITS_OFF), "Full path to arc OFF")
+    hdr["ARC_OF_P"] = (str(config.ARC_SLITS_OFF), "Full path to arc OFF")
 
     out_dir = Path(config.ST07_WAVECAL)
     out_dir.mkdir(parents=True, exist_ok=True)

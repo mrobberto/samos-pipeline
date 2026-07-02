@@ -205,7 +205,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    st10 = Path(config.ST09_TELLURIC)
+    st10 = Path(config.ST10_TELLURIC)
     st11 = Path(config.ST11_FLUXCAL)
     st11.mkdir(parents=True, exist_ok=True)
 
@@ -222,7 +222,7 @@ def main():
                 extract_fits = p
                 break
     if extract_fits is None or not Path(extract_fits).exists():
-        raise FileNotFoundError("No suitable Step09 telluric-corrected FITS found")
+        raise FileNotFoundError("No suitable Step10 telluric-corrected FITS found")
     
     phot_csv = args.phot_csv
     if phot_csv is None:

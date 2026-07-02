@@ -39,6 +39,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
+from astropy.table import Table
 
 import config
 
@@ -149,8 +150,8 @@ def main(argv=None):
                     help="Trace set to process")
     ap.add_argument("--arc1d", type=str, default=None,
                     help="Input Step07c arc1d FITS")
-    ap.add_argument("--out-csv", type=str, default=None,
-                    help="Output CSV")
+#    ap.add_argument("--out-csv", type=str, default=None,
+#                    help="Output CSV")
     ap.add_argument("--out-stack", type=str, default=None,
                     help="Output aligned stack FITS")
     ap.add_argument("--refslit", type=str, default=None,
@@ -169,12 +170,12 @@ def main(argv=None):
     st07 = Path(config.ST07_WAVECAL).expanduser()
 
     arc1d_fits = Path(args.arc1d).expanduser() if args.arc1d else default_arc1d_path(trace_set)
-    out_csv = Path(args.out_csv).expanduser() if args.out_csv else (st07 / f"Arc_shifts_initial_{trace_set}.csv")
+#    out_csv = Path(args.out_csv).expanduser() if args.out_csv else (st07 / f"Arc_shifts_initial_{trace_set}.csv")
     out_stack_fits = Path(args.out_stack).expanduser() if args.out_stack else (st07 / f"Arc_stack_aligned_{trace_set}.fits")
 
     print("TRACE_SET   =", trace_set)
     print("ARC1D_FITS  =", arc1d_fits)
-    print("OUT_CSV     =", out_csv)
+#    print("OUT_CSV     =", out_csv)
     print("OUT_STACK   =", out_stack_fits)
 
     if not arc1d_fits.exists():
@@ -254,14 +255,32 @@ def main(argv=None):
 
     rows_sorted = sorted(rows, key=lambda r: slit_num(r[0]))
 
-    out_csv.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_csv, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["slit", "BRY", "SHIFT_vs_REF(px)", "peak", "prominence", "width_px", "search_ylo", "search_yhi"])
-        for r in rows_sorted:
-            w.writerow(list(r))
+#    out_csv.parent.mkdir(parents=True, exist_ok=True)
+#    with open(out_csv, "w", newline="") as f:
+#        w = csv.writer(f)
+#        w.writerow(["slit", "BRY", "SHIFT_vs_REF(px)", "peak", "prominence", "width_px", "search_ylo", "search_yhi"])
+#        for r in rows_sorted:
+#            w.writerow(list(r))
 
-    print("Wrote:", out_csv)
+#    print("Wrote:", out_csv)
+
+    tab = Table()
+    tab["SLIT"] = [r[0] for r in rows_sorted]
+    tab["BRY"] = [r[1] for r in rows_sorted]
+    tab["SHIFT_INITIAL"] = [r[2] for r in rows_sorted]
+    tab["PEAK"] = [r[3] for r in rows_sorted]
+    tab["PROMINENCE"] = [r[4] for r in rows_sorted]
+    tab["WIDTH_PX"] = [r[5] for r in rows_sorted]
+    
+    shift_fits = (
+        Path(args.out_shift_fits).expanduser()
+        if hasattr(args, "out_shift_fits") and args.out_shift_fits
+        else st07 / f"arc_shift_initial_{trace_set}.fits"
+    )
+    
+    tab.write(shift_fits, overwrite=True)
+    print("Wrote:", shift_fits)
+
 
     with fits.open(arc1d_fits) as h:
         slits_present = list_slits(h)

@@ -86,7 +86,7 @@ DOES NOT DO
 - flux calibration (Step11)
 
 run:
-    > PYTHONPATH=. python pipeline/step08_extract1d/step08c_attach_wavelength.py --overwrite
+    > PYTHONPATH=. python pipeline/step08_extract1d/step08c_attach_wavelength.py 
 
 """
 from __future__ import annotations
@@ -105,6 +105,25 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
 log = logging.getLogger("step08c_attach_wavelength")
+
+# -----------------------------------------------------------------------------
+# Optional manual wavelength zero-point corrections
+# -----------------------------------------------------------------------------
+# Values are ADDED to LAMBDA_NM for the listed slits.
+# Example:
+#   if measured A-band minimum is too red by +1.2 nm,
+#   use -1.2 nm here.
+#
+# Leave empty for default behavior.
+WAVE_ZEROPOINT_CORR_NM = {
+#     "SLIT013": -110,
+#     "SLIT018": 100,
+#     "SLIT021": 90,
+#     "SLIT030": 20,#-1.20,
+#     "SLIT038": -60,
+#     "SLIT044": -64,#-1.20,
+}
+
 
 
 def poly_from_header(hdr: fits.Header) -> np.poly1d:
@@ -139,6 +158,17 @@ def read_shift_to_master(master_arc: Path) -> dict[str, float]:
         raise RuntimeError(f"No SHIFT_TO_MASTER entries found in {master_arc}")
     return out
 
+def pick_active_wavelength_mef(st07: Path) -> Path:
+    base = st07 / "arc_1d_wavelength_all.fits"
+    tweak = st07 / "arc_1d_wavelength_all_trial_tweak.fits"
+
+    if tweak.exists():
+        log.info("Using tweaked Step07h wavelength MEF: %s", tweak)
+        return tweak
+
+    log.info("Using baseline Step07h wavelength MEF: %s", base)
+    return base
+
 
 def is_slit_ext(hdu) -> bool:
     return (hdu.name or "").upper().startswith("SLIT")
@@ -172,7 +202,8 @@ def parse_args():
                     help="Override YWIN0 if not present in master solution header")
     ap.add_argument("--firstlen", type=int, default=-1,
                     help="Override FIRSTLEN if not present in master solution header")
-    ap.add_argument("--overwrite", action="store_true", help="Overwrite output file")
+    ap.add_argument("--overwrite", action="store_true", default=True,
+                    help="Overwrite output file (default: True)")
     return ap.parse_args()
 
 
@@ -181,6 +212,7 @@ def main():
 
     st07 = Path(config.ST07_WAVECAL)
     st08 = Path(config.ST08_EXTRACT1D)
+    active_wave_mef = pick_active_wavelength_mef(st07)
 
     infile = Path(args.infile) if args.infile else (st08 / "extract1d_optimal_ridge_all.fits")
     outfile = Path(args.outfile) if args.outfile else (st08 / "extract1d_optimal_ridge_all_wav.fits")
@@ -236,6 +268,8 @@ def main():
         phdr.add_history(f"INPUT_EXTRACT1D={infile}")
         phdr.add_history(f"MASTER_ARC={master_arc}")
         phdr.add_history(f"MASTER_SOL={master_sol}")
+        phdr["WAVEMEF"] = (active_wave_mef.name, "Step07h wavelength MEF used by Step08c")
+        phdr.add_history(f"ACTIVE_WAVE_MEF={active_wave_mef}")
 
         for key, val, comment in wvc_keys:
             phdr[key] = (val, comment)
@@ -272,12 +306,53 @@ def main():
                 hout.append(ext.copy())
                 continue
 
-            y_local = np.asarray(ext.data["YPIX"], float)
-            y_det = y_local + float(y0det)
-            shift = float(shift_to_master[slit])
-            y_eff = (y_det - ywin0) + shift
-            lam = poly(y_eff).astype(np.float32)
+            with fits.open(active_wave_mef) as hw:
+                if slit not in hw:
+                    log.warning("%s: missing from active wavelength MEF, falling back to polynomial", slit)
+            
+                    y_local = np.asarray(ext.data["YPIX"], float)
+                    y_det = y_local + float(y0det)
+                    shift = float(shift_to_master[slit])
+                    y_eff = (y_det - ywin0) + shift
+                    lam = poly(y_eff).astype(np.float32)
+            
+                else:
+                    arr = np.asarray(hw[slit].data, float)
+                    if arr.ndim < 2 or arr.shape[0] < 2:
+                        raise ValueError(f"{slit}: unexpected active wavelength MEF shape {arr.shape}")
+            
+                    lam_full = np.asarray(arr[1], np.float32)
 
+                    y_local = np.asarray(ext.data["YPIX"], float)
+                    y_det = y_local + float(y0det)
+                    shift = float(shift_to_master[slit])
+                    y_eff = (y_det - ywin0) + shift
+                    
+                    nrow = len(y_local)
+                    
+                    if lam_full.size == nrow:
+                        lam = lam_full.copy()
+                    else:
+                        # Step07h wavelength MEF may preserve the full arc/extraction length,
+                        # while Step08 extraction tables may be trimmed. Align by YPIX index.
+                        idx = np.asarray(y_local, int)
+                    
+                        lam = np.full(nrow, np.nan, dtype=np.float32)
+                        ok_idx = (idx >= 0) & (idx < lam_full.size)
+                        lam[ok_idx] = lam_full[idx[ok_idx]]
+                    
+                        log.info(
+                            "%s: active wavelength length %d != table length %d; mapped by YPIX",
+                            slit, lam_full.size, nrow,
+                        )
+        
+            
+            # Optional per-slit manual wavelength zero-point correction.
+            # This shifts wavelength labels only; it does not resample flux.
+            wave_offset_nm = float(WAVE_ZEROPOINT_CORR_NM.get(slit, 0.0))
+            if wave_offset_nm != 0.0:
+                lam = lam + wave_offset_nm
+            
             # Set outside-master-domain wavelengths to NaN for safety.
             bad = ~np.isfinite(y_eff) | (y_eff < 0) | (y_eff > (firstlen - 1))
             lam[bad] = np.nan
@@ -289,7 +364,10 @@ def main():
             new_hdu.header["SHIFT2M"] = (float(shift), "SHIFT_TO_MASTER used to attach wavelength")
             new_hdu.header["YMAP"] = ("YDET=(Y0DET+YPIX); y=(YDET-YWIN0)+SHIFT2M",
                                        "Step08c wavelength mapping")
+            new_hdu.header["WAVOFFNM"] = (float(wave_offset_nm), "Manual wavelength zero-point correction added to LAMBDA_NM")
             new_hdu.header.add_history("Added/updated LAMBDA_NM using Step07 master polynomial and SHIFT_TO_MASTER.")
+            new_hdu.header["WAVEMEF"] = (active_wave_mef.name, "Step07h wavelength MEF used")
+            
             for key, val, comment in wvc_keys:
                 if key not in new_hdu.header:
                     new_hdu.header[key] = (val, comment)

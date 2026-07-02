@@ -26,8 +26,8 @@ Step 04 — Trace determination (Level2-style, robust for dense packed slitlets)
 5) Construct slit ID map
    - assign each mask pixel to nearest slit center
 
-6) Optional: identify second spectral order
-   - quartz traces may show faint higher-order features
+6) Optional: identify edge leaks
+   - quartz traces may show faint leaking features
      at the long-wavelength end of some slitlets
    - these features are separated from the first-order
      spectrum by a gap in detector space
@@ -171,6 +171,11 @@ parser.add_argument(
     default="EVEN",
     help="Trace set to process (EVEN or ODD)"
 )
+parser.add_argument(
+    "--trim-edge-tails",
+    action="store_true",
+    help="Optionally trim red/blue edge-tail leakage regions from quartz trace masks."
+)
 
 args, unknown = parser.parse_known_args()
 TRACE_SET = args.trace_set.upper()
@@ -213,7 +218,7 @@ FILE_B = in_dir / quartz_b_name
 OUTDIR = Path(config.ST04_TRACES)
 OUTDIR.mkdir(parents=True, exist_ok=True)
 
-EXPECTED_NSLITS = 32  # informational only (never used to stop anything)
+EXPECTED_NSLITS = len(load_radec_table(radec_path))  # informational only (never used to stop anything)
 
 YWIN0 = int(config.WAVECAL_YWIN0)
 FIRSTLEN = int(config.WAVECAL_FIRSTLEN)
@@ -267,10 +272,10 @@ WIDTH_SMOOTH_WIN   = 31
 WIDTH_OUTLIER_PIX  = 1.5
 
 # --- First-order trimming based on quartz gap (per slit) ---
-# The 2nd order is best identified in the quartz continuum (Even_traces), not in sparse arc lines.
+# The edge tails are best identified in the quartz continuum (Even_traces), not in sparse arc lines.
 # If enabled, we detect a per-slit "gap" along the dispersion (Y) direction and zero-out mask/slitid
 # beyond the gap, so downstream wavecal/extraction operate on first order only.
-TRIM_SECOND_ORDER = True
+TRIM_EDGE_TAILS = bool(args.trim_edge_tails)
 
 # Solid by-design first-order length (pixels along dispersion axis)
 FIRST_ORDER_LEN = FIRSTLEN
@@ -371,7 +376,7 @@ def detect_first_order_start_y(profile_y: np.ndarray,
     return None
 
 
-def should_trim_second_order(profile_y: np.ndarray,
+def should_trim_edge_tails(profile_y: np.ndarray,
                             y0: int, y1: int,
                             y_start: int,
                             smooth_w: int = 101,
@@ -522,13 +527,13 @@ def trim_second_order_from_mask(diff: np.ndarray, mask: np.ndarray, slitid: np.n
         if y_start is None:
             y_cut = None
         else:
-            if should_trim_second_order(prof_y, y0=y0, y1=y1, y_start=y_start):
+            if should_trim_edge_tails(prof_y, y0=y0, y1=y1, y_start=y_start):
                 y_cut = int(y_start - 1)
             else:
                 y_cut = None
         """
         y_gap_start = detect_gap_end_y(prof_y, y0=y0, y1=y1)
-        y_cut = y_gap_start  # remove everything at/above this cut (upper 2nd-order side)
+        y_cut = y_gap_start  # remove everything at/above this cut 
         
         if y_cut is not None:
             # remove top rows >= y_cut
@@ -1089,28 +1094,44 @@ def main():
         raise ValueError("TRACE_SET must be EVEN or ODD")
     
     # Map old detection index -> new global slit ID
-    new_sid_for_oldidx = np.zeros(nslits, dtype=int)
+    new_sid_for_oldidx = np.full(nslits, -1, dtype=int)
     
-    for rank, old_idx in enumerate(order_ra):
-        new_sid_for_oldidx[old_idx] = start_id + 2 * rank
+    if table_has_sid:
+    
+        # assign labels from radec table
+        for j in range(nmap):
+            old_idx = int(idx_x_desc[j])
+            sid = int(radec_rows[j]["sid"])
+            new_sid_for_oldidx[old_idx] = sid
+    
+        # drop unmatched extra detections
+        keep = new_sid_for_oldidx >= 0
+    
+        if np.any(~keep):
+            bad = np.where(~keep)[0]
+            log.warning(
+                "Dropping %d detected trace(s) without RADEC label: old_idx=%s",
+                len(bad),
+                bad.tolist(),
+            )
+    
+        centers = centers[keep]
+        new_sid_for_oldidx = new_sid_for_oldidx[keep]
+    
+        # IMPORTANT: recompute slit count after filtering
+        nslits = len(centers)
+    
+    else:
+    
+        # fallback legacy numbering
+        for rank, old_idx in enumerate(order_ra):
+            new_sid_for_oldidx[old_idx] = start_id + 2 * rank
     
     # Convenience: old SID (1..N) -> new global SID
     new_sid_for_oldsid = {
         old_sid: int(new_sid_for_oldidx[old_sid - 1])
         for old_sid in range(1, nslits + 1)
     }
-    
-    log.info(
-            "Detected %d slit centers (EXPECTED_NSLITS=%s informational).",
-            len(centers),
-            str(EXPECTED_NSLITS),
-        )
-    if EXPECTED_NSLITS is not None and len(centers) != int(EXPECTED_NSLITS):
-        log.warning(
-            "Expected %d, found %d slit centers (EXPECTED_NSLITS is informational only).",
-            int(EXPECTED_NSLITS),
-            len(centers),
-        )
 
     if len(centers) == 0:
         raise RuntimeError("No slit centers found. Lower PEAK_PROMINENCE/PEAK_HEIGHT_FRAC.")
@@ -1194,10 +1215,12 @@ def main():
     # -------------------------------------------------------------------------
     # 4b) OPTIONAL: trim 2nd order using quartz gap, per slit (from continuum)
     # -------------------------------------------------------------------------
-    if TRIM_SECOND_ORDER:
-        log.info("Trimming 2nd order using quartz gap (per slit)...")
+    if TRIM_EDGE_TAILS:
+        log.info("Trimming edge-tail/leakage regions using quartz gap (per slit)...")
         mask, slitid, slit_rows = trim_second_order_from_mask(diff, mask, slitid, slit_rows)
-# 5) Write outputs
+    else:
+        log.info("Edge-tail trimming disabled; keeping full quartz trace mask.")
+    # 5) Write outputs
     # -------------------------------------------------------------------------
     mhdr = hdr.copy()
     mhdr.add_history(f"{TRACE_BASE}_mask: row-dependent traced centers + per-row local segmentation")

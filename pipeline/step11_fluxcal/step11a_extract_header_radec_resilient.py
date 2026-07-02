@@ -115,7 +115,7 @@ def load_radec_table(path: Path):
 def build_radec_lookup_from_csv() -> dict[str, tuple[float, float]]:
     out = {}
     for trace_set, fname in [("EVEN", "radec_Even.csv"), ("ODD", "radec_Odd.csv")]:
-        path = Path(config.REGIONS) / fname
+        path = Path(config.REGIONS_DIR) / fname
         if not path.exists():
             continue
         rows = load_radec_table(path)
@@ -165,9 +165,10 @@ def parse_args():
     ap.add_argument(
         "--infile",
         type=Path,
-        default=Path(getattr(config, "EXTRACT1D_TELLCOR", Path(config.ST10_TELLURIC) / "extract1d_optimal_ridge_all_wav_ohclean_tellcorr.fits")),
+        default=Path(getattr(config, "EXTRACT1D_TELLCOR", Path(config.ST10_TELLURIC) / "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus_tellcorr.fits")),
         help="Input Step10 telluric-corrected MEF",
     )
+        
     ap.add_argument(
         "--out",
         type=Path,
@@ -177,12 +178,12 @@ def parse_args():
     ap.add_argument(
         "--even-geom",
         type=Path,
-        default=Path(config.ST04_PIXFLAT) / "Even_traces_geometry.fits",
+        default=Path(config.ST04_TRACES) / "Even_traces_geometry.fits",
     )
     ap.add_argument(
         "--odd-geom",
         type=Path,
-        default=Path(config.ST04_PIXFLAT) / "Odd_traces_geometry.fits",
+        default=Path(config.ST04_TRACES) / "Odd_traces_geometry.fits",
     )
     return ap.parse_args()
 
@@ -225,13 +226,14 @@ def main():
                 except Exception:
                     ra = dec = None
 
-            if src is None and slit in geom_lookup:
-                ra, dec, gxref, gxlo, gxhi, gymin = geom_lookup[slit]
-                src = "GEOMETRY"
-
             if src is None and slit in csv_lookup:
                 ra, dec = csv_lookup[slit]
                 src = "CSV"
+            
+            if src is None and slit in geom_lookup:
+                ra, dec, gxref, gxlo, gxhi, gymin = geom_lookup[slit]
+                src = "GEOMETRY"
+                
 
             if src is None:
                 n_missing += 1

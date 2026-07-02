@@ -58,11 +58,17 @@ def qc_one(trace_set):
     outdir = st05 / f"qc_step05_{suffix}"
     outdir.mkdir(parents=True, exist_ok=True)
 
+    #------------
     # files
+    #------------
     qfile = st05 / f"quartz_diff_{suffix}.fits"
     ifile = st05 / f"illum2d_{suffix}.fits"
-    pfile = st05 / f"pixflat_{suffix}.fits"
-
+    
+    if trace_set == "EVEN":
+        pfile = Path(config.PIXFLAT_EVEN)
+    else:
+        pfile = Path(config.PIXFLAT_ODD)
+        
     quartz = fits.getdata(qfile)
     illum2d = fits.getdata(ifile)
     pixflat = fits.getdata(pfile)
