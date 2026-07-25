@@ -21,7 +21,7 @@ def main():
     out_dir = Path(config.ST02_BIASCORR)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    masterbias = Path(config.ST01_BIAS) / "MasterBias.fits"
+    masterbias = Path(config.MASTER_BIAS_FITS)
     if not masterbias.exists():
         raise FileNotFoundError(f"Missing {masterbias}. Run Step01 first.")
 
