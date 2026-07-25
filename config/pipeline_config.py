@@ -66,12 +66,23 @@ NAME_ODD_TRACES_SLITID = "Odd_traces_slitid.fits"
 NAME_EVEN_TRACES_TABLE = "Even_traces_slit_table.csv"
 NAME_ODD_TRACES_TABLE = "Odd_traces_slit_table.csv"
 
+
+
 # Step05: pixel flats
 NAME_PIXFLAT_EVEN = "PixelFlat_from_quartz_diff_EVEN.fits"
 NAME_PIXFLAT_ODD = "PixelFlat_from_quartz_diff_ODD.fits"
 
+NAME_QUARTZDIFF_EVEN = "quartz_diff_even.fits"
+NAME_QUARTZDIFF_ODD = "quartz_diff_odd.fits"
+
+NAME_ILLUM2D_EVEN = "illum2d_even.fits"
+NAME_ILLUM2D_ODD = "illum2d_odd.fits"
+
 # Step06: science products
 NAME_FINAL_SCIENCE_TEMPLATE = "FinalScience_{stem}_ADUperS.fits"
+NAME_SCI_PIXFLATCORR_TEMPLATE = (
+    "FinalScience_{stem}_ADUperS_pixflatcorr_{parity}.fits"
+)
 
 # Step07: wavelength calibration
 NAME_MASTER_ARC_DIFF = "arc_diff.fits"
@@ -212,6 +223,13 @@ def qc_step_dir(qc_root: Path, step_tag: str) -> Path:
     return qc_root / step_tag
 
 
+def science_pixflatcorr_name(target_file_stem: str, parity: str) -> str:
+    parity = parity.upper()
+    return NAME_SCI_PIXFLATCORR_TEMPLATE.format(
+        stem=target_file_stem,
+        parity=parity,
+    )
+
 def science_tracecoords_name(target_file_stem: str, parity: str) -> str:
     parity = parity.upper()
     return f"FinalScience_{target_file_stem}_ADUperS_pixflatcorr_{parity}_tracecoords.fits"
@@ -323,21 +341,40 @@ def build_pixflat_products(profile: ModuleType) -> None:
         profile,
         PIXFLAT_EVEN=profile.ST05_PIXFLAT / NAME_PIXFLAT_EVEN,
         PIXFLAT_ODD=profile.ST05_PIXFLAT / NAME_PIXFLAT_ODD,
-    )
 
+        ILLUM2D_EVEN=profile.ST05_PIXFLAT / NAME_ILLUM2D_EVEN,
+        ILLUM2D_ODD=profile.ST05_PIXFLAT / NAME_ILLUM2D_ODD,
+
+        QUARTZDIFF_EVEN=profile.ST05_PIXFLAT / NAME_QUARTZDIFF_EVEN,
+        QUARTZDIFF_ODD=profile.ST05_PIXFLAT / NAME_QUARTZDIFF_ODD,
+    )
 
 def build_science_products(profile: ModuleType) -> None:
     _assign(
         profile,
-        FINAL_SCIENCE=profile.ST06_SCIENCE / final_science_name(profile.TARGET_FILE_STEM),
+        FINAL_SCIENCE=(
+            profile.ST06_SCIENCE
+            / final_science_name(profile.TARGET_FILE_STEM)
+        ),
+
+        SCI_EVEN_PIXFLATCORR=(
+            profile.ST06_SCIENCE
+            / science_pixflatcorr_name(profile.TARGET_FILE_STEM, "EVEN")
+        ),
+        SCI_ODD_PIXFLATCORR=(
+            profile.ST06_SCIENCE
+            / science_pixflatcorr_name(profile.TARGET_FILE_STEM, "ODD")
+        ),
+
         SCI_EVEN_TRACECOORDS=(
-            profile.ST06_SCIENCE / science_tracecoords_name(profile.TARGET_FILE_STEM, "EVEN")
+            profile.ST06_SCIENCE
+            / science_tracecoords_name(profile.TARGET_FILE_STEM, "EVEN")
         ),
         SCI_ODD_TRACECOORDS=(
-            profile.ST06_SCIENCE / science_tracecoords_name(profile.TARGET_FILE_STEM, "ODD")
+            profile.ST06_SCIENCE
+            / science_tracecoords_name(profile.TARGET_FILE_STEM, "ODD")
         ),
     )
-
 
 def build_wavecal_products(profile: ModuleType) -> None:
     _assign(

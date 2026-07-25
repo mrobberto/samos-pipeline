@@ -2,35 +2,94 @@
 # -*- coding: utf-8 -*-
 
 """
-Step06b — apply the Step05 pixel flat to the FinalScience mosaic.
+Step06b — apply the Step05 pixel flat to the final science mosaic.
 
-Baseline-preserving port:
-- keeps the classic Step06b correction behavior
-- updates only plumbing to the new config / directory architecture
+Purpose
+-------
+Apply the appropriate EVEN or ODD pixel flat to the canonical Step06a science
+image while preserving detector coordinates.
+
+The flat correction is applied only inside the corresponding Step04 trace mask.
+Flat values within the active mask are clipped to the configured safe range
+before division.
+
+Processing
+----------
+For the selected trace set, the script:
+
+1. reads the canonical Step06a science mosaic;
+2. reads the configured Step05 pixel flat;
+3. reads the corresponding Step04 trace mask;
+4. optionally registers the flat and mask to the science image using an integer
+   X shift;
+5. clips flat values inside the mask;
+6. divides the science image by the clipped flat only inside the trace mask;
+7. writes the corrected detector-coordinate science image.
+
+Configuration
+-------------
+The production defaults are defined by the active reduction profile:
+
+- ``STEP06B_CLIP_LO``
+- ``STEP06B_CLIP_HI``
+- ``STEP06B_REGISTER_FLAT``
 
 Inputs
 ------
-science : config.ST06_SCIENCE / FinalScience_*_ADUperS.fits
-flat    : config.PIXFLAT_EVEN or config.PIXFLAT_ODD
-mask    : Step04 mask in config.ST04_TRACES:
-          prefer *_mask_reg.fits, fallback *_mask.fits
+- Canonical science mosaic:
 
-Output
-------
-By default writes to config.ST06_SCIENCE using the historical naming style:
-  FinalScience_<target>_ADUperS[_reg]_pixflatcorr_clipped_<TRACESET>.fits
+    config.FINAL_SCIENCE
+
+- Pixel flat:
+
+    config.PIXFLAT_EVEN
+    config.PIXFLAT_ODD
+
+- Trace mask from:
+
+    config.ST04_TRACES
+
+Canonical outputs
+-----------------
+For the normal non-registered production path:
+
+    config.SCI_EVEN_PIXFLATCORR
+    config.SCI_ODD_PIXFLATCORR
+
+corresponding to:
+
+    FinalScience_<target>_ADUperS_pixflatcorr_EVEN.fits
+    FinalScience_<target>_ADUperS_pixflatcorr_ODD.fits
 
 Optional QC
 -----------
-If --write-masked-qc is given, also writes a masked copy with pixels outside
+With ``--write-masked-qc``, an additional image is written with pixels outside
 the active trace mask set to NaN.
 
-Run:
+Notes
+-----
+- No geometric resampling is performed.
+- Pixel-flat correction is restricted to the active trace mask.
+- Command-line input and output overrides are retained for testing.
+- The production workflow uses canonical configured paths and does not discover
+  products through wildcard searches.
 
-PYTHONPATH=. python pipeline/step06_science_rectify/step06b_apply_pixflat_clip.py --traceset EVEN
-PYTHONPATH=. python pipeline/step06_science_rectify/step06b_apply_pixflat_clip.py --traceset ODD
+Run
+---
+  PYTHONPATH=. python \
+      pipeline/step06_science_rectify/step06b_apply_pixflat_clip.py \
+      --traceset EVEN
 
-Spyder:
+  PYTHONPATH=. python \
+      pipeline/step06_science_rectify/step06b_apply_pixflat_clip.py \
+      --traceset ODD
+
+Normally both trace sets are run through:
+
+  PYTHONPATH=. python drivers/run_pipeline.py \
+      --from-step 06b --to-step 06b
+
+or from Spyder:
 
 runfile("pipeline/step06_science_rectify/step06b_apply_pixflat_clip.py", args="--traceset EVEN")
 runfile("pipeline/step06_science_rectify/step06b_apply_pixflat_clip.py", args="--traceset ODD")
@@ -98,12 +157,15 @@ def _pick_mask(st04: Path, traceset: str) -> Path:
     return reg if reg.exists() else raw
 
 
-def _default_science(st06: Path) -> Path:
-    default_science = next(st06.glob("FinalScience*_ADUperS.fits"), None)
-    if default_science is None:
-        raise FileNotFoundError(f"No FinalScience*_ADUperS.fits found in {st06}")
-    return default_science
-
+def _default_science() -> Path:
+    """Return the canonical Step06a science product."""
+    p = Path(config.FINAL_SCIENCE)
+    if not p.exists():
+        raise FileNotFoundError(
+            f"Canonical Step06a science product not found: {p}. "
+            "Run Step06a first."
+        )
+    return p
 
 def _default_flat(traceset: str) -> Path:
     if traceset == "EVEN":
@@ -155,11 +217,11 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Path to trace mask FITS. Default: prefer *_mask_reg.fits, fallback *_mask.fits.",
     )
-    ap.add_argument("--clip-lo", type=float, default=0.70,
+    ap.add_argument("--clip-lo", type=float, default=float(config.STEP06B_CLIP_LO),
                     help="Lower clip bound for flat values inside mask.")
-    ap.add_argument("--clip-hi", type=float, default=1.30,
+    ap.add_argument("--clip-hi", type=float, default=float(config.STEP06B_CLIP_HI),
                     help="Upper clip bound for flat values inside mask.")
-    ap.add_argument("--register-flat", action="store_true",
+    ap.add_argument("--register-flat", action="store_true", default=bool(config.STEP06B_REGISTER_FLAT),
                     help="Register flat+mask to science via integer X shift measured inside mask.")
     ap.add_argument("--out", type=str, default=None,
                     help="Explicit output filename. If omitted, uses historical naming in config.ST06_SCIENCE.")
@@ -171,13 +233,14 @@ def main(argv: list[str] | None = None) -> None:
     st06 = Path(config.ST06_SCIENCE).expanduser()
     st04 = Path(config.ST04_TRACES).expanduser()
 
-    science_path = Path(args.science).expanduser() if args.science else _default_science(st06)
+    science_path = (
+        Path(args.science).expanduser()
+        if args.science
+        else _default_science()
+    )
+
     if not science_path.exists():
-        hits = sorted(st06.glob("FinalScience*_ADUperS*.fits"))
-        if hits:
-            science_path = hits[0]
-        else:
-            raise FileNotFoundError(f"Science file not found: {science_path} (and no FinalScience*_ADUperS*.fits in {st06})")
+        raise FileNotFoundError(f"Science file not found: {science_path}")
 
     flat_path = Path(args.flat).expanduser() if args.flat else _default_flat(traceset)
     if not flat_path.exists():
@@ -230,8 +293,21 @@ def main(argv: list[str] | None = None) -> None:
     st06.mkdir(parents=True, exist_ok=True)
     if args.out:
         out_path = Path(args.out).expanduser()
+
+    elif args.register_flat:
+        # Optional experimental/non-canonical branch.
+        out_path = st06 / _default_output_name(
+            science_path.name,
+            traceset,
+            True,
+        )
+
     else:
-        out_path = st06 / _default_output_name(science_path.name, traceset, bool(args.register_flat))
+        out_path = Path(
+            config.SCI_EVEN_PIXFLATCORR
+            if traceset == "EVEN"
+            else config.SCI_ODD_PIXFLATCORR
+        )
 
     _merge_provenance(hdr, hdr_flat, keys=("ROT180", "XFLIP", "YFLIP", "BKGID", "NSLITS", "NSLDET", "NSLTAB", "SLTMISM", "TRACESET", "TRCSET"))
     _merge_provenance(hdr, hdr_mask, keys=("ROT180", "XFLIP", "YFLIP", "BKGID", "NSLITS", "NSLDET", "NSLTAB", "SLTMISM", "TRACESET", "TRCSET"))

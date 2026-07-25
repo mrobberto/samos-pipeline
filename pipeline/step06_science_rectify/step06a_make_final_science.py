@@ -1,43 +1,70 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Step06a — build the baseline FinalScience mosaic.
+Step06a — combine calibrated science exposures into the final science mosaic.
 
-PURPOSE
+Purpose
 -------
-Combine the Step03.5 science exposures into a single 2D science mosaic and
-optionally convert it to count-rate units (ADU/s).
+Build the canonical Step06 science image from the explicit science-frame list
+defined by the active reduction profile.
 
-This product defines the full-frame science image used by Step06b for pixel-flat
-correction and by all later slit-based processing.
+The input frames are the Step03.5 products listed in ``config.SCIENCE_FILES``.
+They have already been orientation-corrected, bias-corrected, cosmic-ray
+cleaned, and row-stripe corrected.
 
-INPUT
------
-- config.ST03P5_ROWSTRIPE / *_biascorr_cr_rowcorr.fits
+Processing
+----------
+For each science exposure, the script:
 
-OUTPUT
+1. reads the exposure time from the configured FITS keyword;
+2. optionally converts the image to ADU/s;
+3. optionally applies sigma clipping across the stack;
+4. forms an exposure-time-weighted mean;
+5. records the combination parameters and input provenance in the FITS header.
+
+Configuration
+-------------
+The production defaults are defined by the active reduction profile:
+
+- ``STEP06A_EXPTIME_KEY``
+- ``STEP06A_NORMALIZE_TO_RATE``
+- ``STEP06A_SIGMA_CLIP``
+- ``STEP06A_SIGMA``
+- ``STEP06A_MAXITERS``
+
+Inputs
 ------
-Written to config.ST06_SCIENCE:
+- Science frames listed explicitly in ``config.SCIENCE_FILES``.
 
-- FinalScience_<target>_ADUperS.fits   (default)
-- FinalScience_<target>_ADU.fits       (if --no-normalize-to-rate)
+Canonical output
+----------------
+When ADU/s normalization is enabled and the configured target stem is used:
 
-METHOD
-------
-- exposure-time weighted coaddition
-- optional sigma clipping
-- optional normalization to ADU/s
+    config.FINAL_SCIENCE
 
-NOTES
+corresponding to:
+
+    FinalScience_<target>_ADUperS.fits
+
+Explicit command-line overrides may produce non-canonical filenames for
+interactive testing.
+
+Notes
 -----
-- Inputs are already orientation-corrected, bias-corrected, CR-cleaned,
-  row-stripe corrected, and quadrant-matched.
-- Inputs are single-HDU 2D mosaics.
-- This step does not apply pixel-flat or slit geometry information.
+- The production workflow uses explicit configured inputs rather than wildcard
+  discovery.
+- The output remains in detector coordinates.
+- No flat-fielding or geometric resampling is performed in this step.
 
-run:
-> PYTHONPATH=. python pipeline/step06_science_rectify/step06a_make_final_science.py 
+Run
+---
+  PYTHONPATH=. python \
+      pipeline/step06_science_rectify/step06a_make_final_science.py
 
+Normally this stage is run through:
+
+  PYTHONPATH=. python drivers/run_pipeline.py \
+      --from-step 06a --to-step 06a
 """
 
 from __future__ import annotations
@@ -206,13 +233,13 @@ def main() -> None:
     )
     ap.add_argument(
         "--exptime-key",
-        default="EXPTIME",
+        default=str(config.STEP06A_EXPTIME_KEY),
         help="Header keyword for exposure time (default: EXPTIME)",
     )
     ap.add_argument(
         "--normalize-to-rate",
         action="store_true",
-        default=True,
+        default=bool(config.STEP06A_NORMALIZE_TO_RATE),
         help="Normalize each input to ADU/s before combining (default: True)",
     )
     ap.add_argument(
@@ -224,7 +251,7 @@ def main() -> None:
     ap.add_argument(
         "--sigma-clip",
         action="store_true",
-        default=True,
+        default=bool(config.STEP06A_SIGMA_CLIP),
         help="Apply sigma clipping during stack (default: True)",
     )
     ap.add_argument(
@@ -242,7 +269,7 @@ def main() -> None:
     ap.add_argument(
         "--maxiters",
         type=int,
-        default=5,
+        default=int(config.STEP06A_MAXITERS),
         help="Max iterations for sigma clipping (default: 5)",
     )
     args = ap.parse_args()
@@ -271,12 +298,16 @@ def main() -> None:
     hdr["TOTEXP"] = (float(total_exptime), "Total integration time used")
     hdr.add_history(f"FinalScience combine from stage: {in_dir.name}")
 
-    outname = (
-        f"FinalScience_{args.target}_ADUperS.fits"
-        if args.normalize_to_rate
-        else f"FinalScience_{args.target}_ADU.fits"
-    )
-    outpath = st06 / outname
+    if args.normalize_to_rate and args.target == config.TARGET_FILE_STEM:
+        outpath = Path(config.FINAL_SCIENCE)
+    else:
+        # Explicit non-canonical override, retained for interactive/testing use.
+        outname = (
+            f"FinalScience_{args.target}_ADUperS.fits"
+            if args.normalize_to_rate
+            else f"FinalScience_{args.target}_ADU.fits"
+        )
+        outpath = st06 / outname
 
     fits.PrimaryHDU(data=np.asarray(data, dtype=np.float32), header=hdr).writeto(
         outpath, overwrite=True

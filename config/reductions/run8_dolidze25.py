@@ -23,6 +23,56 @@ PRODUCT_ROOT = REPO_ROOT / "products" / "Run8_Dolidze25"
 GAIN_E_PER_ADU = 2.1
 READNOISE_E = 3.8
 
+
+# -----------------------------------------------------------------------------
+# Dataset parameters
+# -----------------------------------------------------------------------------
+STEP04_ACTIVE_FRAC = 0.03
+STEP04_ACTIVE_PAD = 20
+STEP04_PROFILE_SMOOTH = 3.0
+STEP04_MIN_PEAK_DIST = 18
+STEP04_PEAK_PROMINENCE = 0.15
+STEP04_PEAK_HEIGHT_FRAC = 0.10
+STEP04_HALF_WINDOW = 18
+STEP04_SIDEBAND = 6
+STEP04_LOCAL_NSIG = 5.0
+STEP04_MAX_WIDTH = 13
+STEP04_EDGE_SHRINK = 1
+STEP04_TRACE_CENTER_HW = 10
+STEP04_TRACE_CENTER_JUMP = 2.0
+STEP04_TRACE_CENTER_SMOOTH = 31
+
+STEP05_SIGMA_Y = 75.0
+STEP05_SIGMA_X = 12.0
+STEP05_MASK_EROSION_ITERS = 2
+STEP05_CLIP_LO = 0.5
+STEP05_CLIP_HI = 2.0
+
+# -----------------------------------------------------------------------------
+# Step06: science combination, flat-fielding, and TRACECOORDS
+# -----------------------------------------------------------------------------
+
+# Step06a — science combination
+STEP06A_EXPTIME_KEY = "EXPTIME"
+STEP06A_NORMALIZE_TO_RATE = True
+STEP06A_SIGMA_CLIP = True
+STEP06A_SIGMA = 3.0
+STEP06A_MAXITERS = 5
+
+# Step06b — pixel-flat application
+STEP06B_CLIP_LO = 0.70
+STEP06B_CLIP_HI = 1.30
+STEP06B_REGISTER_FLAT = False
+
+# Step06c — TRACECOORDS
+# Defined now; we will wire these into 06c in the next pass.
+STEP06C_PADX = 7
+STEP06C_INTERP_ORDER = 1
+STEP06C_WIDTH_KEY = "width_med"
+STEP06C_PAD_PIX = 0.5
+STEP06C_MIN_MASK_PIX_PER_ROW = 10
+
+
 # -----------------------------------------------------------------------------
 # Target-specific external inputs
 # -----------------------------------------------------------------------------

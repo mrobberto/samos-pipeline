@@ -1,72 +1,100 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Step 06c — Rectify science slitlets into TRACECOORDS using the Step04 geometry model.
+Step06c — rectify science slitlets into TRACECOORDS.
 
 Purpose
 -------
-Generate per-slit rectified 2D science cutouts in TRACECOORDS from the Step06b
-science image. The transformation uses the slit geometry derived in Step04 and,
-when available, the baseline edge-warp model defined by the left/right slit-edge
-polynomials.
+Generate a multi-extension TRACECOORDS representation from the canonical
+Step06b EVEN or ODD pixel-flat-corrected science image.
 
-This step does not perform science-frame combination itself; rather, it consumes
-the Step06b science product and maps each slit into a common coordinate system
+The transformation uses the slit geometry derived in Step04. Each slitlet is
+mapped from the curved detector geometry into a rectangular coordinate system
 with dispersion along Y and cross-dispersion along X.
 
-Method
-------
-For each slit in the selected trace set (EVEN or ODD), the code:
+Processing
+----------
+For each slit in the selected trace set, the script:
 
-1. reads the Step06b science frame;
-2. reads the Step04 slit ID map, geometry file, and slit-width table;
-3. evaluates the slit center and, when present, the left/right edge models;
-4. rectifies the slit using an edge-based width-preserving mapping;
-5. applies a constant-width mask in rectified space;
-6. rejects rows with insufficient valid pixels;
-7. writes the surviving slit cutout as an extension in a multi-extension FITS file.
+1. reads the canonical Step06b science image;
+2. reads the Step04 slit-ID map, geometry file, and slit-width table;
+3. evaluates the center polynomial and, when available, the left and right
+   slit-edge polynomials;
+4. applies an edge-based, width-preserving coordinate transformation;
+5. applies the constant-width slit mask in rectified space;
+6. rejects rows with insufficient valid slit pixels;
+7. writes the rectified slitlet as one extension in a multi-extension FITS file.
 
-Key features preserved from the baseline implementation:
-- TRACECOORDS-only output
-- edge-based width model (LC*/RC*) when available
-- PADX superpadding
-- row screening
-- Step04-driven slit geometry and per-slit widths
+Configuration
+-------------
+The production defaults are defined by the active reduction profile:
+
+- ``STEP06C_PADX``
+- ``STEP06C_INTERP_ORDER``
+- ``STEP06C_WIDTH_KEY``
+- ``STEP06C_PAD_PIX``
+- ``STEP06C_MIN_MASK_PIX_PER_ROW``
 
 Inputs
 ------
-- Step06b science image:
-    FinalScience*_pixflatcorr_clipped_<TRACESET>.fits
-  or
-    FinalScience*_reg_pixflatcorr_clipped_<TRACESET>.fits
+Canonical Step06b products:
 
-- Step04 geometry products:
-    <Even/Odd>_traces_slitid.fits
-    <Even/Odd>_traces_geometry.fits
-    <Even/Odd>_traces_slit_table.csv
+    config.SCI_EVEN_PIXFLATCORR
+    config.SCI_ODD_PIXFLATCORR
 
-Outputs
--------
-- Multi-extension FITS file containing one rectified 2D cutout per slit:
-    <input_stem>_tracecoords.fits
+Step04 geometry products from ``config.ST04_TRACES``:
 
-Each extension contains:
-- the rectified slit image in TRACECOORDS,
-- detector-coordinate provenance,
-- the geometric coefficients used for the mapping.
+    Even_traces_slitid.fits
+    Odd_traces_slitid.fits
+
+    Even_traces_geometry.fits
+    Odd_traces_geometry.fits
+
+    Even_traces_slit_table.csv
+    Odd_traces_slit_table.csv
+
+Canonical outputs
+-----------------
+    config.SCI_EVEN_TRACECOORDS
+    config.SCI_ODD_TRACECOORDS
+
+corresponding to:
+
+    FinalScience_<target>_ADUperS_pixflatcorr_EVEN_tracecoords.fits
+    FinalScience_<target>_ADUperS_pixflatcorr_ODD_tracecoords.fits
+
+Each output is a multi-extension FITS file with one extension per surviving
+slitlet, named ``SLIT###``.
+
+Coordinate definition
+---------------------
+- Y: dispersion direction
+- X: cross-dispersion direction within the slit
+- pixels outside the rectified slit mask: NaN
 
 Notes
 -----
-- Rectification is intentionally performed after detector-level corrections and
-  flat-fielding have already been applied.
-- The output is a uniform 2D representation for wavelength calibration, quality
-  control, and later extraction/analysis.
-- The script operates separately on EVEN and ODD trace sets.
+- Rectification is performed only after detector-level corrections and
+  pixel-flat correction.
+- No spectral centroid alignment or wavelength calibration is performed here.
+- The Step04 slit geometry and edge models define the transformation.
+- The production workflow uses canonical configured inputs and outputs.
+- An explicit ``--science`` override remains available for testing.
 
 Run
 ---
-  PYTHONPATH=. python pipeline/step06_science_rectify/step06c_TRACECOORDS_representation.py --traceset EVEN
-  PYTHONPATH=. python pipeline/step06_science_rectify/step06c_TRACECOORDS_representation.py --traceset ODD
+  PYTHONPATH=. python \
+      pipeline/step06_science_rectify/step06c_TRACECOORDS_representation.py \
+      --traceset EVEN
+
+  PYTHONPATH=. python \
+      pipeline/step06_science_rectify/step06c_TRACECOORDS_representation.py \
+      --traceset ODD
+
+Normally both trace sets are run through:
+
+  PYTHONPATH=. python drivers/run_pipeline.py \
+      --from-step 06c --to-step 06c
 """
 from __future__ import annotations
 
@@ -123,54 +151,35 @@ def _safe_key(s: str) -> str:
     return s[:68] if len(s) > 68 else s
 
 
-def _pick_step06b_input(st06: Path, trace_set: str, want_regflat):
+def _default_step06b_input(trace_set: str) -> Path:
+    """Return the canonical Step06b product for the selected trace set."""
     trace_set = trace_set.upper()
-    stem = getattr(config, "TARGET_FILE_STEM", "dolidze")
-    
-    cand = [
-        st06 / f"FinalScience_{stem}_ADUperS_pixflatcorr_{trace_set}.fits",
-        st06 / f"FinalScience_{stem}_ADUperS_pixflatcorr_clipped_{trace_set}.fits",
-        st06 / f"FinalScience_{stem}_ADUperS_reg_pixflatcorr_{trace_set}.fits",
-        st06 / f"FinalScience_{stem}_ADUperS_reg_pixflatcorr_clipped_{trace_set}.fits",
-    ]
-    
-    cand += sorted(st06.glob(f"FinalScience*_pixflatcorr_{trace_set}.fits"))
-    cand += sorted(st06.glob(f"FinalScience*_pixflatcorr_clipped_{trace_set}.fits"))
-    cand += sorted(st06.glob(f"FinalScience*_reg_pixflatcorr_{trace_set}.fits"))
-    cand += sorted(st06.glob(f"FinalScience*_reg_pixflatcorr_clipped_{trace_set}.fits"))
-    
-    seen, uniq = set(), []
-    for p in cand:
-        if p not in seen:
-            seen.add(p)
-            uniq.append(p)
-    existing = [p for p in uniq if p.exists()]
-    if not existing:
-        raise FileNotFoundError(f"No Step06b products found for {trace_set} in {st06}")
-    if want_regflat is None:
-        existing.sort(key=lambda p: ("_reg_" in p.name))
-        return existing[0]
-    want_regflat = bool(want_regflat)
-    existing.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for p in existing:
-        try:
-            reg = bool(fits.getheader(p, 0).get("REGFLAT", False))
-        except Exception:
-            continue
-        if reg == want_regflat:
-            return p
-    raise FileNotFoundError(f"No Step06b product with REGFLAT={want_regflat} found for {trace_set} in {st06}")
+
+    if trace_set == "EVEN":
+        path = Path(config.SCI_EVEN_PIXFLATCORR)
+    elif trace_set == "ODD":
+        path = Path(config.SCI_ODD_PIXFLATCORR)
+    else:
+        raise ValueError(f"Unknown trace set: {trace_set}")
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Canonical Step06b product not found: {path}. "
+            f"Run Step06b for {trace_set} first."
+        )
+
+    return path
 
 
 def main(argv: list[str] | None = None):
     ap = argparse.ArgumentParser(description="Baseline Step06c TRACECOORDS rectification")
     ap.add_argument("--traceset", required=True, choices=["EVEN", "ODD", "even", "odd"])
     ap.add_argument("--science", type=str, default=None, help="Override Step06b science input FITS")
-    ap.add_argument("--padx", type=int, default=7)
-    ap.add_argument("--interp-order", type=int, default=1)
+    ap.add_argument("--padx", type=int, default=int(config.STEP06C_PADX))
+    ap.add_argument("--interp-order", type=int, default=int(config.STEP06C_INTERP_ORDER))
     ap.add_argument("--width-key", type=str, default="width_med")
-    ap.add_argument("--pad-pix", type=float, default=0.5)
-    ap.add_argument("--min-mask-pix-per-row", type=int, default=10)
+    ap.add_argument("--pad-pix", type=float, default=float(config.STEP06C_PAD_PIX))
+    ap.add_argument("--min-mask-pix-per-row", type=int, default=int(config.STEP06C_MIN_MASK_PIX_PER_ROW))
     ap.add_argument("--want-regflat", choices=["true", "false"], default=None,
                     help="Require Step06b input with REGFLAT=true/false; default prefers non-registered")
     args = ap.parse_args(argv)
@@ -182,8 +191,16 @@ def main(argv: list[str] | None = None):
     st04 = Path(config.ST04_TRACES)
     st06 = Path(config.ST06_SCIENCE)
 
-    want_regflat = None if args.want_regflat is None else (args.want_regflat.lower() == "true")
-    sci = Path(args.science).expanduser() if args.science else _pick_step06b_input(st06, trace_set, want_regflat)
+    if args.science:
+        sci = Path(args.science).expanduser()
+    else:
+        if args.want_regflat is not None:
+            raise ValueError(
+                "--want-regflat is only supported with an explicit --science override. "
+                "The production pipeline uses the canonical non-registered Step06b product."
+            )
+        sci = _default_step06b_input(trace_set)
+
 
     base = "Even_traces" if trace_set == "EVEN" else "Odd_traces"
     slitid_path = st04 / f"{base}_slitid.fits"
@@ -201,11 +218,17 @@ def main(argv: list[str] | None = None):
     if not slit_table_csv.exists():
         raise FileNotFoundError(slit_table_csv)
 
-    outdir = sci.parent
-    stem = sci.stem
-    if f"_{trace_set}" not in stem:
-        stem = f"{stem}_{trace_set}"
-    out_mef_tracecoords = outdir / f"{stem}_tracecoords.fits"
+    if args.science:
+        stem = sci.stem
+        if f"_{trace_set}" not in stem:
+            stem = f"{stem}_{trace_set}"
+        out_mef_tracecoords = sci.parent / f"{stem}_tracecoords.fits"
+    else:
+        out_mef_tracecoords = Path(
+            config.SCI_EVEN_TRACECOORDS
+            if trace_set == "EVEN"
+            else config.SCI_ODD_TRACECOORDS
+        )
 
     log.info("Input   : %s", sci)
     log.info("SlitID  : %s", slitid_path)

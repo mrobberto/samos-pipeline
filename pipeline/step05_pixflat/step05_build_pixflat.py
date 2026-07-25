@@ -30,14 +30,14 @@ Products per set (TRACE_BASE = Even_traces or Odd_traces):
   - {TRACE_BASE}_Illum2D_quartzdiff.fits
   - {TRACE_BASE}_PixelFlat_from_quartz_diff.fits   (main pixflat)
 
-Run 
+Run
 ---
 from repo root:
     PYTHONPATH=. python pipeline/step05_pixflat/step05_build_pixflat.py
-    
+
 Or in Spyder:
 
-runfile("pipeline/step05_pixflat/step05_build_pixflat.py")    
+runfile("pipeline/step05_pixflat/step05_build_pixflat.py")
 """
 
 import logging
@@ -58,17 +58,17 @@ logger = logging.getLogger("step05_pixflat")
 # User-tunable parameters
 # -----------------------------------------------------------------------------
 
-# Smoothing for illum2d model. Larger => keep only low-frequency illumination.
-SIGMA_Y = 75.0
-SIGMA_X = 12.0
+# Smoothing for the illumination model. Larger values retain only
+# low-frequency illumination structure.
+SIGMA_Y = float(config.STEP05_SIGMA_Y)
+SIGMA_X = float(config.STEP05_SIGMA_X)
 
-# Erode mask edges so illum2d fit ignores trace boundaries (recommended)
-MASK_EROSION_ITERS = 2
+# Erode mask edges so the illumination fit ignores trace boundaries.
+MASK_EROSION_ITERS = int(config.STEP05_MASK_EROSION_ITERS)
 
-# Clip pixflat to avoid extreme corrections (safe-guard)
-CLIP_LO = 0.5
-CLIP_HI = 2.0
-
+# Clip the pixel flat to avoid extreme corrections.
+CLIP_LO = float(config.STEP05_CLIP_LO)
+CLIP_HI = float(config.STEP05_CLIP_HI)
 
 # -----------------------------------------------------------------------------
 # Helpers
@@ -180,13 +180,15 @@ def _build_one(trace_set: str, trace_base: str, qa_name: str, qb_name: str, st04
 
     # Write products
     if trace_set == "EVEN":
-        q_path = st05 / "quartz_diff_even.fits"
-        i_path = st05 / "illum2d_even.fits"
-        p_path = Path(getattr(config, "PIXFLAT_EVEN", st05 / "PixelFlat_from_quartz_diff_EVEN.fits"))
+        q_path = Path(config.QUARTZDIFF_EVEN)
+        i_path = Path(config.ILLUM2D_EVEN)
+        p_path = Path(config.PIXFLAT_EVEN)
+
     elif trace_set == "ODD":
-        q_path = st05 / "quartz_diff_odd.fits"
-        i_path = st05 / "illum2d_odd.fits"
-        p_path = Path(getattr(config, "PIXFLAT_ODD", st05 / "PixelFlat_from_quartz_diff_ODD.fits"))
+        q_path = Path(config.QUARTZDIFF_ODD)
+        i_path = Path(config.ILLUM2D_ODD)
+        p_path = Path(config.PIXFLAT_ODD)
+
     else:
         raise ValueError(f"Unknown trace_set: {trace_set}")
 
