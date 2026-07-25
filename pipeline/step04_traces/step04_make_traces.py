@@ -226,45 +226,48 @@ FIRSTLEN = int(config.WAVECAL_FIRSTLEN)
 # SlitID map background label (must not collide with real slit IDs)
 BKGID = -1
 
-# Active band detection
-ACTIVE_FRAC = 0.03
-ACTIVE_PAD = 20
+# Active-band detection
+ACTIVE_FRAC = float(config.STEP04_ACTIVE_FRAC)
+ACTIVE_PAD = int(config.STEP04_ACTIVE_PAD)
 
-# Center finding (X profile)
-PROFILE_SMOOTH = 3.0          # smooth 1D profile
-MIN_PEAK_DIST = 18            # px (>= slit pitch; prevents duplicates)
-PEAK_PROMINENCE = 0.15        # fraction of max(profile) after normalization
-PEAK_HEIGHT_FRAC = 0.10       # fraction of max(profile)
+# Center finding from the X profile
+PROFILE_SMOOTH = float(config.STEP04_PROFILE_SMOOTH)
+MIN_PEAK_DIST = int(config.STEP04_MIN_PEAK_DIST)
+PEAK_PROMINENCE = float(config.STEP04_PEAK_PROMINENCE)
+PEAK_HEIGHT_FRAC = float(config.STEP04_PEAK_HEIGHT_FRAC)
 
-# Local mask building per slit
-# Trace geometry fit (derived from quartz mask/slitid; saved for later steps)
-TRACE_PORDER = 5            # polynomial order for x_center(y)
-TRACE_SMOOTH = 9            # median filter size along y (odd int)
-TRACE_WEIGHTED = True       # use flux-weighted centroid within mask
+# Trace geometry fit
+TRACE_PORDER = 5
+TRACE_SMOOTH = 9
+TRACE_WEIGHTED = True
 
-# Edge geometry fit (left/right edges) to stabilize slit boundaries in rectification
-EDGE_PORDER = TRACE_PORDER   # polynomial order for x_left(y), x_right(y)
-EDGE_SMOOTH = TRACE_SMOOTH   # median filter size along y (odd int)
-EDGE_PAD_PIX = 0.5          # padding added to modeled edges when masking/rectifying (pixels)
+# Edge geometry fit
+EDGE_PORDER = TRACE_PORDER
+EDGE_SMOOTH = TRACE_SMOOTH
+EDGE_PAD_PIX = 0.5
 
 TRACE_CENTER_PORDER = 2
-TRACE_EDGE_PORDER   = 2
-CENTER_SMOOTH_WIN   = 31
-EDGE_SMOOTH_WIN     = 31
-CENTER_OUTLIER_PIX  = 1.5
-EDGE_OUTLIER_PIX    = 2.0
-MIN_ROWS_FIT        = 20
+TRACE_EDGE_PORDER = 2
+CENTER_SMOOTH_WIN = 31
+EDGE_SMOOTH_WIN = 31
+CENTER_OUTLIER_PIX = 1.5
+EDGE_OUTLIER_PIX = 2.0
+MIN_ROWS_FIT = 20
 
-HALF_WINDOW = 18              # window half-size arofgeometrrund each center to inspect
-SIDEBAND = 6                  # sideband width (pixels) for local background
-LOCAL_NSIG = 5.0              # threshold = bkg + LOCAL_NSIG * sigma
-USE_MAD = True                # robust sigma estimate from sidebands
-MAX_WIDTH = 13                # cap final width (px) so it doesn’t bloat
-EDGE_SHRINK = 1               # remove 1 px on each side after segmentation (0 disables)
+# Local mask construction for each slit
+HALF_WINDOW = int(config.STEP04_HALF_WINDOW)
+SIDEBAND = int(config.STEP04_SIDEBAND)
+LOCAL_NSIG = float(config.STEP04_LOCAL_NSIG)
+USE_MAD = True
+MAX_WIDTH = int(config.STEP04_MAX_WIDTH)
+EDGE_SHRINK = int(config.STEP04_EDGE_SHRINK)
 
-TRACE_CENTER_HW = 10          # half-window for tracing center on each row
-TRACE_CENTER_JUMP = 2.0       # max allowed row-to-row center motion
-TRACE_CENTER_SMOOTH = 31      # smoothing window for traced centers
+# Trace-center tracking
+TRACE_CENTER_HW = int(config.STEP04_TRACE_CENTER_HW)
+TRACE_CENTER_JUMP = float(config.STEP04_TRACE_CENTER_JUMP)
+TRACE_CENTER_SMOOTH = int(config.STEP04_TRACE_CENTER_SMOOTH)
+
+
 TRACE_CENTER_SEED_Y = None    # None => ny//2
 
 TRACE_WIDTH_PORDER = 1      # 0 = constant width, 1 = slowly varying width
@@ -445,12 +448,12 @@ def detect_gap_end_y(profile_y: np.ndarray,
                 gap_len = end - start + 1
                 if gap_len < 200:
                     return None
-            
+
                 # Convert reversed indices back to original Y coordinates
                 # start/end of gap in original indexing
                 y_gap_start = hi - end
                 y_gap_end   = hi - start
-            
+
                 # Cut at the midpoint of the detected gap
                 y_gap_mid = 0.5 * (y_gap_start + y_gap_end)
                 return int(round(y_gap_mid))
@@ -467,7 +470,7 @@ def detect_gap_end_y(profile_y: np.ndarray,
             y_gap_end   = hi - start
             y_gap_mid = 0.5 * (y_gap_start + y_gap_end)
             return int(round(y_gap_mid))
-    
+
 
     return None
 
@@ -481,7 +484,7 @@ def trim_second_order_from_mask(diff: np.ndarray, mask: np.ndarray, slitid: np.n
 
     Also writes OUTDIR/Even_traces_gap_cuts.csv for provenance.
     """
-    
+
     ny, nx = diff.shape
     gap_cuts: dict[int, int | None] = {}
 
@@ -521,7 +524,7 @@ def trim_second_order_from_mask(diff: np.ndarray, mask: np.ndarray, slitid: np.n
             continue
         y0 = int(ys_present.min())
         y1 = int(ys_present.max())
-        
+
         """
         y_start = detect_first_order_start_y(prof_y, y0=y0, y1=y1)
         if y_start is None:
@@ -533,15 +536,15 @@ def trim_second_order_from_mask(diff: np.ndarray, mask: np.ndarray, slitid: np.n
                 y_cut = None
         """
         y_gap_start = detect_gap_end_y(prof_y, y0=y0, y1=y1)
-        y_cut = y_gap_start  # remove everything at/above this cut 
-        
+        y_cut = y_gap_start  # remove everything at/above this cut
+
         if y_cut is not None:
             # remove top rows >= y_cut
             kill = comp.copy()
             kill[:y_cut, :] = False   # keep rows below the cut
             mask[kill] = False
             slitid[kill] = BKGID
-    
+
         gap_cuts[sid] = y_cut
 
     n_found = sum(1 for v in gap_cuts.values() if v is not None)
@@ -568,7 +571,7 @@ def trim_second_order_from_mask(diff: np.ndarray, mask: np.ndarray, slitid: np.n
                 row[8] = 0
             new_slit_rows.append(tuple(row))
             continue
-        
+
         ys_present = np.where(np.any(comp, axis=1))[0]
         y0_new = int(ys_present.min())
         y1_new = int(ys_present.max())
@@ -990,17 +993,17 @@ def main():
     # -------------------------------------------------------------------------
     from astropy.io import fits
     import matplotlib.pyplot as plt
-    
+
     # 1. Open the FITS file
     with fits.open(fileA) as hduA:
         imgA = hduA[0].data
     with fits.open(fileB) as hduB:
         hdr = hduB[0].header
         imgB = hduB[0].data
-    
+
 #    hduA = samos.read_SAMI_mosaic(str(fileA))
 #    hduB = samos.read_SAMI_mosaic(str(fileB))
-    
+
 #    imgA = np.asarray(hduA.data, dtype=np.float32)
 #    imgB = np.asarray(hduB.data, dtype=np.float32)
     if imgA.shape != imgB.shape:
@@ -1037,7 +1040,7 @@ def main():
         prominence=PEAK_PROMINENCE,
     )
     centers = (peaks + x0).astype(int)
-    
+
     # ---------------------------------------------------------------------
     # 2b) Load RA/Dec table and map to detected slits (RA order = x DESC)
     # ---------------------------------------------------------------------
@@ -1084,7 +1087,7 @@ def main():
 
     # RA order: right -> left
     order_ra = np.argsort(centers)[::-1]
-    
+
     # Determine parity for this run
     if TRACE_SET.upper() == "EVEN":
         start_id = 0
@@ -1092,21 +1095,21 @@ def main():
         start_id = 1
     else:
         raise ValueError("TRACE_SET must be EVEN or ODD")
-    
+
     # Map old detection index -> new global slit ID
     new_sid_for_oldidx = np.full(nslits, -1, dtype=int)
-    
+
     if table_has_sid:
-    
+
         # assign labels from radec table
         for j in range(nmap):
             old_idx = int(idx_x_desc[j])
             sid = int(radec_rows[j]["sid"])
             new_sid_for_oldidx[old_idx] = sid
-    
+
         # drop unmatched extra detections
         keep = new_sid_for_oldidx >= 0
-    
+
         if np.any(~keep):
             bad = np.where(~keep)[0]
             log.warning(
@@ -1114,19 +1117,19 @@ def main():
                 len(bad),
                 bad.tolist(),
             )
-    
+
         centers = centers[keep]
         new_sid_for_oldidx = new_sid_for_oldidx[keep]
-    
+
         # IMPORTANT: recompute slit count after filtering
         nslits = len(centers)
-    
+
     else:
-    
+
         # fallback legacy numbering
         for rank, old_idx in enumerate(order_ra):
             new_sid_for_oldidx[old_idx] = start_id + 2 * rank
-    
+
     # Convenience: old SID (1..N) -> new global SID
     new_sid_for_oldsid = {
         old_sid: int(new_sid_for_oldidx[old_sid - 1])
@@ -1206,10 +1209,10 @@ def main():
     # --- SAVE PRE-TRIM STATE ---
     mask_pretrim_path = OUTDIR / f"{TRACE_BASE}_mask_pretrim.fits"
     slitid_pretrim_path = OUTDIR / f"{TRACE_BASE}_slitid_pretrim.fits"
-    
+
     fits.PrimaryHDU(mask.astype(np.uint8)).writeto(mask_pretrim_path, overwrite=True)
     fits.PrimaryHDU(slitid.astype(np.int16)).writeto(slitid_pretrim_path, overwrite=True)
-    
+
     log.info("Wrote %s", mask_pretrim_path)
     log.info("Wrote %s", slitid_pretrim_path)
     # -------------------------------------------------------------------------
@@ -1248,7 +1251,7 @@ def main():
     slitid_path = OUTDIR / f"{TRACE_BASE}_slitid.fits"
     fits.PrimaryHDU(slitid, header=shdr).writeto(slitid_path, overwrite=True)
     log.info("Wrote %s", slitid_path)
-    
+
     """
     table_path = OUTDIR / f"{TRACE_BASE}_slit_table.csv"
     lines = ["slit_id,old_slit_id,ra,dec,xc,width_min,width_mean,width_max,width_p16,width_med,width_p84,nrows_used,y0,y1\\n"]
@@ -1260,14 +1263,14 @@ def main():
     """
     # --- write slit table CSV (REAL newlines) ---
     table_path = OUTDIR / f"{TRACE_BASE}_slit_table.csv"
-    
+
     lines = []
     lines.append("slit_id,old_slit_id,index,ra,dec,xc,width_min,width_mean,width_max,width_p16,width_med,width_p84,nrows_used,y0,y1\n")
-    
+
     for row in slit_rows:
         # unpack according to your slit_rows structure
         sid, old_sid, xc, wmin, wmean, wmax, w16, w50, w84, nrows, y0, y1 = row
-    
+
         radec = slit_radec.get(old_sid, {"ra": "", "dec": ""})  # RA/Dec tied to OLD id
         lines.append(
             f"{int(sid)},{int(old_sid)},{'' if radec.get('idx', None) is None else int(radec.get('idx'))},{radec['ra']},{radec['dec']},{int(xc)},"
@@ -1277,14 +1280,14 @@ def main():
     # write as text with correct newlines
     table_path.write_text("".join(lines), encoding="utf-8")
     log.info("Wrote %s", table_path)
-    
+
     # -------------------------------------------------------------------------
     # 5b) ALSO write *_mask_reg / *_slitid_reg as ID-preserving copies
     #     (Downstream QC + some steps prefer *_reg if present.)
     # -------------------------------------------------------------------------
     mask_reg_path = OUTDIR / f"{TRACE_BASE}_mask_reg.fits"
     slitid_reg_path = OUTDIR / f"{TRACE_BASE}_slitid_reg.fits"
-    
+
     # check so the pipeline cannot silently regress to 1..N again:
     u = np.unique(slitid[slitid != BKGID]).astype(int)
     u = u[u != BKGID]
@@ -1301,19 +1304,19 @@ def main():
             exp = np.arange(0, 66, 2)
         else:
             exp = np.arange(1, 65, 2)
-    
+
     if not (len(u) == len(exp) and np.all(u == exp)):
         log.warning("GLOBAL ID SET NOT CANONICAL")
         log.warning("Found: %s", u)
         log.warning("Expected: %s", exp)
-    
+
     fits.PrimaryHDU(mask.astype(np.uint8), header=mhdr).writeto(mask_reg_path, overwrite=True)
     fits.PrimaryHDU(slitid.astype(np.int16), header=shdr).writeto(slitid_reg_path, overwrite=True)
-    
+
     log.info("Wrote %s (copy; preserves IDs)", mask_reg_path)
     log.info("Wrote %s (copy; preserves IDs)", slitid_reg_path)
-    
-    
+
+
     # -------------------------------------------------------------------------
     # 6) Write a geometry reference MEF (per-slit polynomial x_center(y))
     #     This is the "fixed geometry" product to be used by later steps (e.g. 06c)
@@ -1495,10 +1498,10 @@ def main():
             hh["DEC"] = (str(radec.get("dec", "")), "Slit Dec from radec.csv")
             if radec.get("idx", None) is not None:
                 hh["INDEX"] = (int(radec["idx"]), "Target index from input radec table")
-        
+
         # Optional but VERY useful for debugging / provenance
         hh["OLDSID"] = (int(old_sid), "Original slit index before RA relabel")
-        
+
         geom_hdus.append(fits.ImageHDU(data=xcen_fit.astype(np.float32), header=hh))
 
     fits.HDUList(geom_hdus).writeto(geom_path, overwrite=True)

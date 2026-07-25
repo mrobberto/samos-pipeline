@@ -56,6 +56,27 @@ ROWSTRIPE_ESTIMATOR = "median"
 ROWSTRIPE_SMOOTH_OFFSETS = False
 ROWSTRIPE_SMOOTH_WIN = 21
 
+# -----------------------------------------------------------------------------
+# Step04 trace-detection defaults
+# -----------------------------------------------------------------------------
+STEP04_ACTIVE_FRAC = 0.03
+STEP04_ACTIVE_PAD = 20
+
+STEP04_PROFILE_SMOOTH = 3.0
+STEP04_MIN_PEAK_DIST = 18
+STEP04_PEAK_PROMINENCE = 0.15
+STEP04_PEAK_HEIGHT_FRAC = 0.10
+
+STEP04_HALF_WINDOW = 18
+STEP04_SIDEBAND = 6
+STEP04_LOCAL_NSIG = 5.0
+STEP04_MAX_WIDTH = 13
+STEP04_EDGE_SHRINK = 1
+
+STEP04_TRACE_CENTER_HW = 10
+STEP04_TRACE_CENTER_JUMP = 2.0
+STEP04_TRACE_CENTER_SMOOTH = 31
+
 # Step04: traces and slit geometry
 NAME_EVEN_TRACES_GEOM = "Even_traces_geometry.fits"
 NAME_ODD_TRACES_GEOM = "Odd_traces_geometry.fits"
