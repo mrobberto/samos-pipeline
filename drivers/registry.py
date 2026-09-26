@@ -121,6 +121,6 @@ OUTPUT_CHECKS: dict[str, tuple[str, ...]] = {
 #    "12b": ("EXTRACT1D_ILLUMCORR",),
 #    "12c": ("EXTRACT1D_FINALCAL", "STEP12C_SUMMARY_CSV"),
     "12d": ("STEP12D_MASTER_FITS", "STEP12D_SUMMARY_CSV"),
-    "12e": ("QC_STEP12D_RESPONSE_PDF",),
+    "12e": ("EXTRACT1D_FINALCAL",),
 }
 

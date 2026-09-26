@@ -1,393 +1,464 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SAMOS Step12d: Build Ensemble Stellar-Response Correction
-=========================================================
+Step12d — build the adopted ensemble spectrophotometric response
+================================================================
 
-Purpose
--------
-Derive an empirical wavelength-dependent response correction for SAMOS
-spectra by comparing flux-calibrated stellar continua against physically
-plausible stellar spectral energy distributions.
+This stage converts the validated Step11 ensemble shape correction into the
+production Step12 response.
 
-This stage supersedes the earlier Step12c polynomial refinement approach.
-Rather than fitting arbitrary smooth residual curves, Step12d derives a
-physically motivated spectrograph response function from the ensemble of
-stellar spectra in the field.
+The response shape is supplied by the validated quadratic ensemble solution
+(normalized at the SkyMapper i-band pivot).  Step12d then derives ONE global
+normalization factor from the Step11 spectra themselves so that, on average,
+the correction preserves the synthetic SkyMapper i-band flux.
 
-Method
-------
-For each slit with valid SkyMapper r/i/z photometry:
+Thus the production response is
 
-1. Read the Step11 flux-calibrated spectrum (FLUX_FLAM).
-2. Read the corresponding continuum estimate derived in Step09.
-3. Convert the Step09 continuum into physical flux units by matching its
-   median level to the Step11 calibrated spectrum.
-4. Fit a reddened blackbody model using:
-       - effective temperature (Teff)
-       - extinction (Av)
-       - multiplicative scale factor
-   constrained by the SkyMapper r/i/z photometry.
-5. Compute the ratio:
+    R_prod(lambda) = C_i * R_shape(lambda)
 
-       response(lambda) =
-           blackbody_model(lambda) /
-           observed_continuum(lambda)
+where C_i is the median, over usable spectra, of
 
-6. Normalize the response curve near the i-band region.
-7. Reject pathological solutions using percentile and RMS criteria.
-8. Build an ensemble median stellar-response correction from all accepted
-   stellar spectra.
+    <f_nu>_i,Step11 / <f_nu>_i,Step11*R_shape .
 
-Scientific Rationale
---------------------
-The resulting response curve represents residual large-scale throughput
-errors remaining after the nominal Step11 flux calibration. These include:
-
-- wavelength-dependent slit losses,
-- imperfect flat-field illumination structure,
-- residual instrumental throughput curvature,
-- continuum-shape systematics.
-
-Because the response is derived from an ensemble of stars constrained by
-physical stellar continua and external photometry, the correction is more
-stable and astrophysically meaningful than a purely empirical polynomial
-fit.
-
-Inputs
-------
-Step09 continuum product:
-    extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus.fits
-
-Step11 flux-calibrated spectra:
-    extract1d_fluxcal.fits
-
-SkyMapper photometric catalog:
-    slit_trace_radec_skymapper_all.csv
+No per-object catalog normalization is performed here or in Step12e.
 
 Outputs
 -------
-step12d_stellar_response_per_slit.fits
-    Per-slit fitted continua, blackbody models, and response curves.
-
 step12d_stellar_response_master.fits
-    Ensemble median response correction.
-
 step12d_stellar_response_summary.csv
-    Per-slit fit statistics and acceptance flags.
-
 step12d_stellar_response_metadata.json
-    Processing metadata and provenance.
-
-Notes
------
-- The trusted wavelength range is typically 590--960 nm.
-- Step12d derives only the spectral-shape correction.
-- Absolute normalization is handled later in Step12e.
-- Spectra with pathological fits are excluded from the ensemble response.
 """
-from pathlib import Path
+
+from __future__ import annotations
+
 import argparse
 import json
+import logging
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from astropy.io import fits
-from scipy.optimize import least_squares
-from scipy.ndimage import median_filter, gaussian_filter1d
 
 import config
 
-H = 6.62607015e-27
-C = 2.99792458e10
-K = 1.380649e-16
+log = logging.getLogger("step12d_build_stellar_response")
 
-LAM_EFF = {"r": 620.0, "i": 760.0, "z": 900.0}
+C_A_S = 2.99792458e18  # Angstrom/s
 
-
-def abmag_to_flam(mag_ab, lam_nm):
-    fnu = 10 ** (-0.4 * (mag_ab + 48.60))
-    lam_A = lam_nm * 10.0
-    return fnu * 2.99792458e18 / lam_A**2
+PIVOT_R_NM = 613.8440330950057
+PIVOT_I_NM = 776.79762950059
+PIVOT_Z_NM = 914.5992987637427
 
 
-def bb_flam_shape(lam_nm, teff):
-    lam_cm = lam_nm * 1e-7
-    x = H * C / (lam_cm * K * teff)
-    x = np.clip(x, 1e-6, 700)
-    b_cm = (2 * H * C**2 / lam_cm**5) / np.expm1(x)
-    return b_cm * 1e-8  # per Angstrom
-
-
-def ccm89_k_lambda(lam_nm, rv=3.1):
-    """Approx CCM89 optical/NIR A_lambda / A_V."""
-    lam_um = lam_nm / 1000.0
-    x = 1.0 / lam_um
-    y = x - 1.82
-
-    a = (1
-         + 0.17699*y - 0.50447*y**2 - 0.02427*y**3
-         + 0.72085*y**4 + 0.01979*y**5 - 0.77530*y**6
-         + 0.32999*y**7)
-
-    b = (1.41338*y + 2.28305*y**2 + 1.07233*y**3
-         - 5.38434*y**4 - 0.62251*y**5 + 5.30260*y**6
-         - 2.09002*y**7)
-
-    return a + b / rv
-
-
-def reddened_bb(lam_nm, teff, av, scale):
-    bb = bb_flam_shape(lam_nm, teff)
-    ext = 10 ** (-0.4 * av * ccm89_k_lambda(lam_nm))
-    return scale * bb * ext
-
-
-def fit_bb_av_scale(lam_nm, flam):
-    lam_nm = np.asarray(lam_nm, float)
-    flam = np.asarray(flam, float)
-
-    m = np.isfinite(lam_nm) & np.isfinite(flam) & (flam > 0)
-    lam_nm, flam = lam_nm[m], flam[m]
-
-    if len(lam_nm) < 3:
-        raise RuntimeError("Need at least 3 photometric points")
-
-    def resid(p):
-        logT, av, logS = p
-        teff = 10**logT
-        scale = 10**logS
-        model = reddened_bb(lam_nm, teff, av, scale)
-        return np.log10(model) - np.log10(flam)
-
-    p0 = [np.log10(6000.0), 1.0, -35.0]
-    bounds = ([np.log10(2500), 0.0, -80], [np.log10(30000), 10.0, 20])
-
-    res = least_squares(resid, p0, bounds=bounds, max_nfev=5000)
-
-    logT, av, logS = res.x
-    return 10**logT, av, 10**logS, float(np.sqrt(np.mean(res.fun**2)))
-
-
-def choose_continuum_column(names):
-    for c in ["CONTINUUM_STEP09", "CONTINUUM_P1", "CONT2", "CONT1"]:
-        if c in names:
-            return c
-    return None
-
-
-def norm_median(y, lam, lo=730, hi=780):
-    m = np.isfinite(lam) & np.isfinite(y) & (y > 0) & (lam >= lo) & (lam <= hi)
-    if np.count_nonzero(m) < 5:
-        return np.nan
-    return float(np.nanmedian(y[m]))
-
-
-def main():
-    ap = argparse.ArgumentParser()
-    
-    ap.add_argument(
-        "--step09",
-        default=str(config.EXTRACT1D_STEP09_CONSENSUS)
+def _default_response_csv() -> Path:
+    name = "qc_step11_ensemble_response.csv"
+    candidates = [
+        Path(getattr(config, "ST11_FLUXCAL", ".")) / name,
+        Path(getattr(config, "ST11_FLUXCAL", ".")) / "qc_step11" / name,
+        Path(getattr(config, "ST10_TELLURIC", ".")) / name,
+        Path(getattr(config, "ST12_FINALCAL", ".")) / name,
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    raise FileNotFoundError(
+        "Could not find qc_step11_ensemble_response.csv. Tried:\n  "
+        + "\n  ".join(str(p) for p in candidates)
     )
-    
-    default_fluxcal = config.EXTRACT1D_FLUXCAL
-    
-    ap.add_argument("--fluxcal", default=str(default_fluxcal))
-    
-    ap.add_argument("--photcat", default=str(config.STEP12_PHOTCAT))
-    
-    ap.add_argument(
-        "--outdir",
-        default=str(config.ST12_FINALCAL / "step12d_stellar_response")
-    )
-    
-    ap.add_argument("--trusted-min", type=float, default=590.0)
-    ap.add_argument("--trusted-max", type=float, default=960.0)
-    
-    args = ap.parse_args()
 
-    step09 = Path(args.step09)
-    fluxcal = Path(args.fluxcal)
-    photcat = Path(args.photcat)
-    outdir = Path(args.outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
 
-    phot = pd.read_csv(photcat)
-    phot["slit"] = phot["slit"].astype(str).str.upper().str.strip()
+def _companion_loo(path: Path) -> Path:
+    return path.with_name(path.stem + "_loo.csv")
+
+
+def _validated_table(df: pd.DataFrame, trust_min: float, trust_max: float) -> pd.DataFrame:
+    required = ["lambda_nm", "response_quadratic", "loo_p16", "loo_p84"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise KeyError(f"Response CSV missing required columns: {missing}")
+
+    q = df[required].copy()
+    for c in required:
+        q[c] = pd.to_numeric(q[c], errors="coerce")
+
+    q = q.replace([np.inf, -np.inf], np.nan).dropna()
+    q = q.sort_values("lambda_nm").drop_duplicates("lambda_nm")
+
+    if len(q) < 3:
+        raise RuntimeError("Too few finite response samples.")
+
+    lam = q["lambda_nm"].to_numpy(float)
+    if trust_min < lam.min() or trust_max > lam.max():
+        raise ValueError(
+            f"Requested trusted interval [{trust_min:.3f}, {trust_max:.3f}] nm "
+            f"is outside response grid [{lam.min():.3f}, {lam.max():.3f}] nm."
+        )
+    if trust_max <= trust_min:
+        raise ValueError("--trust-max must be greater than --trust-min")
 
     rows = []
-    hdus = [fits.PrimaryHDU()]
-    response_stack = []
-    common_lam = np.arange(args.trusted_min, args.trusted_max + 0.25, 0.25)
+    for w in (trust_min, trust_max):
+        rows.append(
+            {
+                "lambda_nm": w,
+                "response_quadratic": float(np.interp(w, lam, q["response_quadratic"])),
+                "loo_p16": float(np.interp(w, lam, q["loo_p16"])),
+                "loo_p84": float(np.interp(w, lam, q["loo_p84"])),
+            }
+        )
 
-    with fits.open(step09) as h9, fits.open(fluxcal) as hf:
-        for _, r in phot.iterrows():
-            slit = r["slit"]
-            if not all(np.isfinite(r.get(f"{b}_mag", np.nan)) for b in ["r", "i", "z"]):
+    inside = q[(q["lambda_nm"] >= trust_min) & (q["lambda_nm"] <= trust_max)]
+    out = pd.concat([inside, pd.DataFrame(rows)], ignore_index=True)
+    out = out.sort_values("lambda_nm").drop_duplicates("lambda_nm").reset_index(drop=True)
+
+    for c in ("response_quadratic", "loo_p16", "loo_p84"):
+        if not np.all(np.isfinite(out[c])):
+            raise RuntimeError(f"Non-finite values remain in {c}")
+        if np.any(out[c].to_numpy(float) <= 0):
+            raise RuntimeError(f"Non-positive values found in {c}")
+
+    return out
+
+
+def _loo_stats(loo_path: Path) -> dict:
+    stats = {
+        "n_stars": np.nan,
+        "loo_gray_median_mag": np.nan,
+        "loo_linear_median_mag": np.nan,
+        "loo_quadratic_median_mag": np.nan,
+        "quadratic_better_than_gray_n": np.nan,
+    }
+    if not loo_path.exists():
+        return stats
+
+    d = pd.read_csv(loo_path)
+    stats["n_stars"] = int(len(d))
+
+    pairs = [
+        ("loo_rms_gray_mag", "loo_gray_median_mag"),
+        ("loo_rms_linear_mag", "loo_linear_median_mag"),
+        ("loo_rms_quadratic_mag", "loo_quadratic_median_mag"),
+    ]
+    for col, key in pairs:
+        if col in d:
+            x = pd.to_numeric(d[col], errors="coerce").to_numpy(float)
+            x = x[np.isfinite(x)]
+            if x.size:
+                stats[key] = float(np.median(x))
+
+    if {"loo_rms_quadratic_mag", "loo_rms_gray_mag"} <= set(d.columns):
+        a = pd.to_numeric(d["loo_rms_quadratic_mag"], errors="coerce").to_numpy(float)
+        b = pd.to_numeric(d["loo_rms_gray_mag"], errors="coerce").to_numpy(float)
+        good = np.isfinite(a) & np.isfinite(b)
+        stats["quadratic_better_than_gray_n"] = int(np.sum(a[good] < b[good]))
+
+    return stats
+
+
+def load_filter_curve(path: Path):
+    rows = []
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            s = line.strip()
+            if not s or s.startswith("#"):
                 continue
-            if slit not in h9 or slit not in hf:
+            vals = []
+            for p in s.replace(",", " ").split():
+                try:
+                    vals.append(float(p))
+                except ValueError:
+                    continue
+            if len(vals) >= 2:
+                rows.append((vals[0], vals[1]))
+
+    if len(rows) < 3:
+        raise RuntimeError(f"Could not read two-column filter curve: {path}")
+
+    a = np.asarray(rows, float)
+    w = a[:, 0]
+    t = a[:, 1]
+
+    med = float(np.nanmedian(w))
+    if med > 3000:      # Angstrom -> nm
+        w = w / 10.0
+    elif med < 10:      # micron -> nm
+        w = w * 1000.0
+
+    good = np.isfinite(w) & np.isfinite(t) & (t >= 0)
+    w, t = w[good], t[good]
+    order = np.argsort(w)
+    return w[order], t[order]
+
+
+def synthetic_fnu_and_coverage(lam_nm, flam_A, filt_nm, filt_t):
+    lam = np.asarray(lam_nm, float)
+    flam = np.asarray(flam_A, float)
+
+    m = np.isfinite(lam) & np.isfinite(flam)
+    if m.sum() < 2:
+        return np.nan, 0.0
+
+    lam = lam[m]
+    flam = flam[m]
+    order = np.argsort(lam)
+    lam, flam = lam[order], flam[order]
+    lam, idx = np.unique(lam, return_index=True)
+    flam = flam[idx]
+
+    fw = np.asarray(filt_nm, float)
+    ft = np.asarray(filt_t, float)
+    positive = np.isfinite(fw) & np.isfinite(ft) & (ft > 0)
+    fw, ft = fw[positive], ft[positive]
+
+    if fw.size < 3 or lam.size < 2:
+        return np.nan, 0.0
+
+    lamA_f = fw * 10.0
+    denom_full = np.trapezoid(ft / lamA_f, lamA_f)
+    if not np.isfinite(denom_full) or denom_full <= 0:
+        return np.nan, 0.0
+
+    overlap = (fw >= lam.min()) & (fw <= lam.max())
+    if overlap.sum() < 3:
+        return np.nan, 0.0
+
+    fw_o = fw[overlap]
+    ft_o = ft[overlap]
+    lamA_o = fw_o * 10.0
+    denom_cov = np.trapezoid(ft_o / lamA_o, lamA_o)
+    coverage = float(denom_cov / denom_full)
+
+    f_interp = np.interp(fw_o, lam, flam)
+    numerator = np.trapezoid(f_interp * ft_o * lamA_o, lamA_o)
+
+    if not np.isfinite(numerator) or denom_cov <= 0:
+        return np.nan, coverage
+
+    return float(numerator / (C_A_S * denom_cov)), coverage
+
+
+def _response_on_grid(lam_nm, master_lam, master_resp):
+    lam_nm = np.asarray(lam_nm, float)
+    out = np.full(lam_nm.shape, np.nan, dtype=float)
+    good = np.isfinite(lam_nm)
+    if good.any():
+        out[good] = np.interp(
+            lam_nm[good],
+            master_lam,
+            master_resp,
+            left=float(master_resp[0]),
+            right=float(master_resp[-1]),
+        )
+    return out
+
+
+def derive_global_i_normalization(
+    spectra_path: Path,
+    master_lam: np.ndarray,
+    shape_resp: np.ndarray,
+    filter_i_path: Path,
+    min_coverage: float = 0.90,
+):
+    """
+    Derive one global scalar that preserves Step11 synthetic i-band flux,
+    in the median over usable slit spectra.
+    """
+    fw, ft = load_filter_curve(filter_i_path)
+    rows = []
+
+    with fits.open(spectra_path, memmap=False) as h:
+        for ext in h[1:]:
+            if not (ext.name or "").upper().startswith("SLIT"):
+                continue
+            if ext.data is None:
+                continue
+            names = set(ext.columns.names)
+            if "LAMBDA_NM" not in names or "FLUX_FLAM" not in names:
                 continue
 
-            d9 = h9[slit].data
-            df = hf[slit].data
+            lam = np.asarray(ext.data["LAMBDA_NM"], float)
+            flux = np.asarray(ext.data["FLUX_FLAM"], float)
+            resp = _response_on_grid(lam, master_lam, shape_resp)
+            shaped = flux * resp
 
-            cont_col = choose_continuum_column(d9.names)
-            if cont_col is None:
-                continue
+            fpre, c0 = synthetic_fnu_and_coverage(lam, flux, fw, ft)
+            fshp, c1 = synthetic_fnu_and_coverage(lam, shaped, fw, ft)
 
-            lam = np.asarray(df["LAMBDA_NM"], float)
-            flux = np.asarray(df["FLUX_FLAM"], float)
+            if (
+                c0 >= min_coverage
+                and c1 >= min_coverage
+                and np.isfinite(fpre)
+                and np.isfinite(fshp)
+                and fpre > 0
+                and fshp > 0
+            ):
+                rows.append((ext.name.upper(), float(fpre / fshp)))
 
-            lam9 = np.asarray(d9["LAMBDA_NM"], float)
-            cont9 = np.asarray(d9[cont_col], float)
+    if not rows:
+        raise RuntimeError("No spectra usable for global i-band response normalization.")
 
-            s9 = np.argsort(lam9)
-            cont_interp = np.interp(lam, lam9[s9], cont9[s9], left=np.nan, right=np.nan)
+    ratios = np.asarray([x[1] for x in rows], float)
+    factor = float(np.median(ratios))
+    p16, p84 = np.percentile(ratios, [16, 84])
 
-            trusted = (
-                np.isfinite(lam) & np.isfinite(flux) & np.isfinite(cont_interp) &
-                (flux > 0) & (cont_interp > 0) &
-                (lam >= args.trusted_min) & (lam <= args.trusted_max)
-            )
+    return factor, float(p16), float(p84), rows
 
-            if np.count_nonzero(trusted) < 100:
-                continue
 
-            scale09 = np.nanmedian(flux[trusted] / cont_interp[trusted])
-            cont_flam = cont_interp * scale09
+def parse_args() -> argparse.Namespace:
+    ap = argparse.ArgumentParser(
+        description="Build Step12d production response from validated ensemble shape."
+    )
+    ap.add_argument("--response-csv", type=str, default="")
+    ap.add_argument("--spectra", type=str, default="")
+    ap.add_argument("--out-fits", type=str, default="")
+    ap.add_argument("--summary-csv", type=str, default="")
+    ap.add_argument("--metadata-json", type=str, default="")
+    ap.add_argument("--trust-min", type=float, default=PIVOT_R_NM)
+    ap.add_argument("--trust-max", type=float, default=PIVOT_Z_NM)
+    ap.add_argument("--min-i-coverage", type=float, default=0.90)
+    return ap.parse_args()
 
-            # Mild cleanup of continuum, not raw flux.
-            cont_smooth = median_filter(cont_flam, size=31)
-            cont_smooth = gaussian_filter1d(cont_smooth, sigma=7)
 
-            lam_phot = np.array([LAM_EFF["r"], LAM_EFF["i"], LAM_EFF["z"]], float)
-            flam_phot = np.array([
-                abmag_to_flam(r["r_mag"], LAM_EFF["r"]),
-                abmag_to_flam(r["i_mag"], LAM_EFF["i"]),
-                abmag_to_flam(r["z_mag"], LAM_EFF["z"]),
-            ])
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    )
+    args = parse_args()
 
-            try:
-                teff, av, scale, rmsdex = fit_bb_av_scale(lam_phot, flam_phot)
-            except Exception:
-                continue
+    response_csv = Path(args.response_csv) if args.response_csv else _default_response_csv()
+    spectra_path = Path(args.spectra) if args.spectra else Path(config.EXTRACT1D_STEP12_INPUT)
+    out_fits = Path(args.out_fits) if args.out_fits else Path(config.STEP12D_MASTER_FITS)
+    summary_csv = Path(args.summary_csv) if args.summary_csv else Path(config.STEP12D_SUMMARY_CSV)
+    metadata_json = Path(args.metadata_json) if args.metadata_json else Path(config.STEP12D_METADATA_JSON)
 
-            bb = reddened_bb(lam, teff, av, scale)
-            resp = bb / cont_smooth
+    for p in (out_fits, summary_csv, metadata_json):
+        p.parent.mkdir(parents=True, exist_ok=True)
 
-            nrm = norm_median(resp, lam)
-            if not np.isfinite(nrm) or nrm <= 0:
-                continue
-            resp_norm = resp / nrm
+    log.info("Validated ensemble response: %s", response_csv)
+    log.info("Step11 spectra for global i normalization: %s", spectra_path)
+    log.info("Trusted interval: %.6f .. %.6f nm", args.trust_min, args.trust_max)
 
-            q = np.nanpercentile(resp_norm[trusted], [1, 50, 99])
-            accept = (
-                np.all(np.isfinite(q)) and
-                q[0] > 0.05 and
-                q[2] < 20.0 and
-                rmsdex < 0.15
-            )
+    raw = pd.read_csv(response_csv)
+    master = _validated_table(raw, args.trust_min, args.trust_max)
+    stats = _loo_stats(_companion_loo(response_csv))
 
-            rows.append({
-                "slit": slit,
-                "cont_col": cont_col,
-                "teff": teff,
-                "av": av,
-                "scale": scale,
-                "rmsdex": rmsdex,
-                "scale09": scale09,
-                "resp_p01": q[0],
-                "resp_med": q[1],
-                "resp_p99": q[2],
-                "accepted": accept,
-            })
+    lam = master["lambda_nm"].to_numpy(np.float64)
+    shape_resp = master["response_quadratic"].to_numpy(np.float64)
+    shape_p16 = master["loo_p16"].to_numpy(np.float64)
+    shape_p84 = master["loo_p84"].to_numpy(np.float64)
 
-            cols = [
-                fits.Column(name="LAMBDA_NM", array=lam, format="D"),
-                fits.Column(name="FLUX_FLAM", array=flux, format="D"),
-                fits.Column(name="CONT09_FLAM", array=cont_flam, format="D"),
-                fits.Column(name="CONT09_SMOOTH", array=cont_smooth, format="D"),
-                fits.Column(name="BB_MODEL", array=bb, format="D"),
-                fits.Column(name="RESP_BB", array=resp_norm, format="D"),
-            ]
-            hdu = fits.BinTableHDU.from_columns(cols, name=slit)
-            hdu.header["TEFF"] = float(teff)
-            hdu.header["AV"] = float(av)
-            hdu.header["RMSDEX"] = float(rmsdex)
-            hdu.header["ACCEPT"] = int(accept)
-            hdus.append(hdu)
+    global_i_norm, norm_p16, norm_p84, norm_rows = derive_global_i_normalization(
+        spectra_path,
+        lam,
+        shape_resp,
+        Path(config.FILTER_I),
+        min_coverage=float(args.min_i_coverage),
+    )
 
-            if accept:
-            
-                mresp = (
-                    np.isfinite(lam) &
-                    np.isfinite(resp_norm) &
-                    (resp_norm > 0) &
-                    (lam >= args.trusted_min) &
-                    (lam <= args.trusted_max)
-                )
-            
-                if np.count_nonzero(mresp) > 50:
-                    order = np.argsort(lam[mresp])
-                    lam_good = lam[mresp][order]
-                    resp_good = resp_norm[mresp][order]
-            
-                    keep = np.concatenate(([True], np.diff(lam_good) > 0))
-                    lam_good = lam_good[keep]
-                    resp_good = resp_good[keep]
-            
-                    resp_interp = np.interp(
-                        common_lam,
-                        lam_good,
-                        resp_good,
-                        left=np.nan,
-                        right=np.nan,
-                    )
-            
-                    response_stack.append(resp_interp)
-                    
-                    
-    summary = pd.DataFrame(rows)
-    summary.to_csv(outdir / "step12d_stellar_response_summary.csv", index=False)
+    resp = shape_resp * global_i_norm
+    p16 = shape_p16 * global_i_norm
+    p84 = shape_p84 * global_i_norm
 
-    fits.HDUList(hdus).writeto(outdir / "step12d_stellar_response_per_slit.fits", overwrite=True)
+    phdr = fits.Header()
+    phdr["PIPESTEP"] = ("STEP12", "SAMOS pipeline step")
+    phdr["STAGE"] = ("12d", "Pipeline stage")
+    phdr["METHOD"] = ("ENS_QUAD", "Validated ensemble quadratic response")
+    phdr["RESPCSV"] = (response_csv.name, "Input ensemble-response CSV")
+    phdr["TRUSTLO"] = (float(args.trust_min), "Trusted response lower wavelength [nm]")
+    phdr["TRUSTHI"] = (float(args.trust_max), "Trusted response upper wavelength [nm]")
+    phdr["SHAPENM"] = (PIVOT_I_NM, "Shape-response pivot normalization [nm]")
+    phdr["GINORM"] = (global_i_norm, "Global i-band normalization folded into response")
+    phdr["GINP16"] = (norm_p16, "16th percentile individual i-band norm")
+    phdr["GINP84"] = (norm_p84, "84th percentile individual i-band norm")
+    phdr["NGINORM"] = (len(norm_rows), "Spectra used for global i normalization")
+    phdr["PIVOTR"] = (PIVOT_R_NM, "SkyMapper r pivot [nm]")
+    phdr["PIVOTI"] = (PIVOT_I_NM, "SkyMapper i pivot [nm]")
+    phdr["PIVOTZ"] = (PIVOT_Z_NM, "SkyMapper z pivot [nm]")
+    if np.isfinite(stats["n_stars"]):
+        phdr["NSTARS"] = (int(stats["n_stars"]), "Stars in ensemble LOO validation")
+    phdr.add_history("Step12d shape response from validated ensemble quadratic.")
+    phdr.add_history("One global factor preserves median Step11 synthetic i-band flux.")
+    phdr.add_history("No per-object photometric normalization is part of production Step12.")
 
-    if response_stack:
-        stack = np.vstack(response_stack)
-        
-        n_used = np.sum(np.isfinite(stack), axis=0)
-        valid = n_used > 0
-        
-        master = np.full(common_lam.shape, np.nan)
-        p16 = np.full(common_lam.shape, np.nan)
-        p84 = np.full(common_lam.shape, np.nan)
-        
-        master[valid] = np.nanmedian(stack[:, valid], axis=0)
-        p16[valid] = np.nanpercentile(stack[:, valid], 16, axis=0)
-        p84[valid] = np.nanpercentile(stack[:, valid], 84, axis=0)
-
-        cols = [
-            fits.Column(name="LAMBDA_NM", array=common_lam, format="D"),
-            fits.Column(name="RESP_MASTER", array=master, format="D"),
-            fits.Column(name="RESP_P16", array=p16, format="D"),
-            fits.Column(name="RESP_P84", array=p84, format="D"),
-            fits.Column(name="N_USED", array=n_used.astype(float), format="D"),
+    cols = fits.ColDefs(
+        [
+            fits.Column(name="LAMBDA_NM", format="D", array=lam),
+            fits.Column(name="RESP_MASTER", format="D", array=resp),
+            fits.Column(name="RESP_P16", format="D", array=p16),
+            fits.Column(name="RESP_P84", format="D", array=p84),
+            fits.Column(name="RESP_SHAPE", format="D", array=shape_resp),
         ]
-        fits.HDUList([
-            fits.PrimaryHDU(),
-            fits.BinTableHDU.from_columns(cols, name="MASTER_RESPONSE")
-        ]).writeto(outdir / "step12d_stellar_response_master.fits", overwrite=True)
+    )
+    hdu = fits.BinTableHDU.from_columns(cols, name="MASTER_RESPONSE")
+    hdu.header["TRUSTLO"] = float(args.trust_min)
+    hdu.header["TRUSTHI"] = float(args.trust_max)
+    hdu.header["SHAPENM"] = PIVOT_I_NM
+    hdu.header["GINORM"] = global_i_norm
 
-    with open(outdir / "step12d_stellar_response_metadata.json", "w") as f:
-        json.dump({
-            "step09": str(step09),
-            "fluxcal": str(fluxcal),
-            "photcat": str(photcat),
-            "n_rows": int(len(rows)),
-            "n_accepted": int(summary["accepted"].sum()) if len(summary) else 0,
-        }, f, indent=2)
+    fits.HDUList([fits.PrimaryHDU(header=phdr), hdu]).writeto(out_fits, overwrite=True)
 
-    print("[OK] Wrote", outdir)
+    def interp(w, a):
+        return float(np.interp(w, lam, a))
+
+    summary = {
+        "method": "ensemble_quadratic_plus_global_i_normalization",
+        "source_csv": str(response_csv),
+        "spectra_path": str(spectra_path),
+        "trust_min_nm": float(args.trust_min),
+        "trust_max_nm": float(args.trust_max),
+        "pivot_r_nm": PIVOT_R_NM,
+        "pivot_i_nm": PIVOT_I_NM,
+        "pivot_z_nm": PIVOT_Z_NM,
+        "global_i_norm": global_i_norm,
+        "global_i_norm_p16": norm_p16,
+        "global_i_norm_p84": norm_p84,
+        "global_i_norm_n": len(norm_rows),
+        "shape_response_r": interp(PIVOT_R_NM, shape_resp),
+        "shape_response_i": interp(PIVOT_I_NM, shape_resp),
+        "shape_response_z": interp(PIVOT_Z_NM, shape_resp),
+        "response_r": interp(PIVOT_R_NM, resp),
+        "response_i": interp(PIVOT_I_NM, resp),
+        "response_z": interp(PIVOT_Z_NM, resp),
+        **stats,
+    }
+    pd.DataFrame([summary]).to_csv(summary_csv, index=False)
+
+    metadata = {
+        **summary,
+        "output_fits": str(out_fits),
+        "edge_policy_for_step12e": "hold nearest trusted boundary; never polynomial-extrapolate",
+        "global_i_normalization_rows": [
+            {"slit": slit, "factor": fac} for slit, fac in norm_rows
+        ],
+        "notes": [
+            "RESP_SHAPE is normalized at the i-band pivot.",
+            "RESP_MASTER = global_i_norm * RESP_SHAPE.",
+            "The global factor preserves the median Step11 synthetic i-band flux.",
+            "No per-object photometric normalization is used in production Step12.",
+        ],
+    }
+    metadata_json.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
+    log.info(
+        "Global i normalization: %.8f  (N=%d; p16=%.8f p84=%.8f)",
+        global_i_norm, len(norm_rows), norm_p16, norm_p84,
+    )
+    log.info("Wrote: %s", out_fits)
+    log.info("Wrote: %s", summary_csv)
+    log.info("Wrote: %s", metadata_json)
+    log.info(
+        "Production response at pivots: r=%.4f i=%.4f z=%.4f",
+        summary["response_r"], summary["response_i"], summary["response_z"],
+    )
+    if np.isfinite(stats["loo_quadratic_median_mag"]):
+        log.info(
+            "Shape-fit LOO median RMS: gray=%.4f linear=%.4f quadratic=%.4f mag",
+            stats["loo_gray_median_mag"],
+            stats["loo_linear_median_mag"],
+            stats["loo_quadratic_median_mag"],
+        )
 
 
 if __name__ == "__main__":
