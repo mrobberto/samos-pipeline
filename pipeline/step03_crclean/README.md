@@ -96,14 +96,15 @@ The `CRMASK` extension contains:
 
 From the pipeline root:
 
-```python
-runfile("step03_crclean/step03_crclean.py")
+```bash
+PYTHONPATH=. python pipeline/step03_crclean/step03_crclean.py
 ```
 
-or from command line:
-
+Using the main driver instead:
 ```bash
-python step03_crclean/step03_crclean.py
+PYTHONPATH=. python drivers/run_pipeline.py \
+    --from-step 03 \
+    --to-step 03
 ```
 
 ---
