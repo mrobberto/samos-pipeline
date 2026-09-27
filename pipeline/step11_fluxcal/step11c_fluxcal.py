@@ -340,6 +340,17 @@ def main():
             counts = np.asarray(data[flux_col], float)
             var = np.asarray(data[var_col], float) if var_col else None
 
+            # Step08 source-validity gate. A catalog target may exist even
+            # when the intended stellar source was not actually recovered.
+            s08use = int(hdu.header.get("S08USE", 0))
+            s08good = int(hdu.header.get("S08GOOD", s08use))
+            s08clas = str(hdu.header.get("S08CLAS", "")).strip().upper()
+            source_valid = (
+                s08use == 1
+                and s08good == 1
+                and s08clas not in {"EMPTY", "NOSEED"}
+            )
+
             row = phot.loc[phot[slit_col] == slit]
             if len(row) != 1:
                 m_r = m_i = m_z = np.nan
@@ -438,9 +449,23 @@ def main():
                 flam_cal = counts * S * (lam_nm / lam0) ** alpha
                 var_cal = var * (S**2) * (lam_nm / lam0) ** (2 * alpha) if var is not None else None
 
+            if not source_valid:
+                # Preserve the slit and upstream spectroscopy/provenance,
+                # but do not calibrate residual background as the intended star.
+                cal_mode = "REJECT"
+                S = np.nan
+                alpha = np.nan
+                nband = 0
+                flam_cal = np.full_like(counts, np.nan, dtype=float)
+                var_cal = (
+                    np.full_like(var, np.nan, dtype=float)
+                    if var is not None
+                    else None
+                )
+
             dm = {}
             for b, mcat in [("r", m_r), ("i", m_i), ("z", m_z)]:
-                if not np.isfinite(mcat) or (cal_mode == "NONE"):
+                if not np.isfinite(mcat) or cal_mode in {"NONE", "REJECT"}:
                     dm[b] = np.nan
                     continue
                 msyn = synth_abmag_from_flux(lam_nm, flam_cal, bandpass[b], windows[b], LAMBDA_EFF_NM[b])
@@ -454,7 +479,21 @@ def main():
                 cols_out.append(fits.Column(name="VAR_FLAM2", array=var_cal.astype(np.float32), format="E", unit="(erg/s/cm^2/Angstrom)^2"))
 
             hdu_out = fits.BinTableHDU.from_columns(cols_out, name=slit)
+
+            # Explicitly propagate Step08 source-quality provenance needed
+            # by downstream ensemble-calibration stages.
+            for key in ("S08USE", "S08GOOD", "S08CLAS", "S08FWHM", "S08DXC"):
+                if key in hdu.header:
+                    hdu_out.header[key] = (
+                        hdu.header[key],
+                        hdu.header.comments[key],
+                    )
+
             hdu_out.header["FLUXCAL"] = (cal_mode, "Step11 photometric flux calibration mode")
+            hdu_out.header["FCALUSE"] = (
+                int(source_valid),
+                "1 if slit is valid for source photometric calibration",
+            )
             hdu_out.header["FLUXIN"] = (str(flux_col)[:68], "Input flux column used")
             if np.isfinite(S):
                 hdu_out.header["SCALE"] = (S, "Multiplicative scale (counts -> f_lambda)")
