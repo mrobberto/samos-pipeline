@@ -1,4 +1,4 @@
-# step03_crclean
+# step04_traces
 
 ## Purpose
 
@@ -12,7 +12,7 @@ This step produces the reference trace geometry and slit masks used by all subse
 Directory:
 
 ```python
-config.ST03_CRCLEAN
+config.ST04_TRACES
 ```
 
 Expected files:
@@ -130,16 +130,16 @@ Even_traces_gap_cuts.csv
 
 From the pipeline root:
 
-```python
-runfile("step03_crclean/step03_crclean.py")
-```
-
-or from command line:
-
 ```bash
-python step03_crclean/step03_crclean.py
+PYTHONPATH=. python pipeline/step04_traces/step04_make_traces.py --set EVEN
 ```
 
+Using the main driver instead:
+```bash
+PYTHONPATH=. python drivers/run_pipeline.py \
+    --from-step 04 \
+    --to-step 04
+```
 
 ---
 
