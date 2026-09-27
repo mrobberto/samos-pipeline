@@ -273,6 +273,19 @@ def derive_global_i_normalization(
                 continue
             if ext.data is None:
                 continue
+
+            # Independent source-validity gate. Step12d remains protected
+            # even if an upstream file contains rejected slit HDUs.
+            s08use = int(ext.header.get("S08USE", 0))
+            s08good = int(ext.header.get("S08GOOD", s08use))
+            s08clas = str(ext.header.get("S08CLAS", "")).strip().upper()
+            if (
+                s08use != 1
+                or s08good != 1
+                or s08clas in {"EMPTY", "NOSEED"}
+            ):
+                continue
+
             names = set(ext.columns.names)
             if "LAMBDA_NM" not in names or "FLUX_FLAM" not in names:
                 continue
