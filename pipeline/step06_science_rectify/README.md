@@ -21,13 +21,15 @@ The core pipeline operates in detector coordinates.
 From:
 
 ```python
-config.ST03_CRCLEAN
+config.ST03P5_ROWSTRIPE
 ```
 
 Files:
 
 ```text
-*biascorr_cr.fits
+Science files listed in
+
+config.SCIENCE_FILES
 ```
 
 These frames are already:
@@ -43,7 +45,7 @@ These frames are already:
 From Step05:
 
 ```python
-config.ST05_FLATCORR
+config.ST05_PIXFLAT
 ```
 
 Files:
@@ -60,7 +62,7 @@ Odd_traces_PixelFlat_from_quartz_diff.fits
 From Step04:
 
 ```python
-config.ST04_PIXFLAT
+config.ST04_TRACES
 ```
 
 Files:
@@ -111,8 +113,8 @@ FLCLIPHI = 1.30
 Outputs:
 
 ```text
-FinalScience_<target>_pixflatcorr_clipped_EVEN.fits
-FinalScience_<target>_pixflatcorr_clipped_ODD.fits
+FinalScience_<target>_ADUperS_pixflatcorr_EVEN.fits
+FinalScience_<target>_ADUperS_pixflatcorr_ODD.fits
 ```
 
 ---
@@ -126,8 +128,11 @@ FinalScience_<target>_pixflatcorr_clipped_ODD.fits
 Output:
 
 ```text
-FinalScience_<target>_tracecoords.fits
+FinalScience_<target>_ADUperS_pixflatcorr_EVEN_tracecoords.fits
+
+FinalScience_<target>_ADUperS_pixflatcorr_ODD_tracecoords.fits
 ```
+One TRACECOORDS file is produced for each trace set (EVEN and ODD), each containing one FITS extension per slitlet.
 
 Multi-extension FITS file:
 
@@ -149,8 +154,12 @@ config.ST06_SCIENCE
 
 ```text
 FinalScience_<target>_ADUperS.fits
-FinalScience_<target>_pixflatcorr_clipped_{EVEN,ODD}.fits
-FinalScience_<target>_tracecoords.fits
+
+FinalScience_<target>_ADUperS_pixflatcorr_EVEN.fits
+FinalScience_<target>_ADUperS_pixflatcorr_ODD.fits
+
+FinalScience_<target>_ADUperS_pixflatcorr_EVEN_tracecoords.fits
+FinalScience_<target>_ADUperS_pixflatcorr_ODD_tracecoords.fits
 ```
 
 ---
@@ -223,7 +232,7 @@ runfile("step06_science_rectify/step06c_TRACECOORDS_representation.py")
 
 ## Notes
 
-* Step06c is an optional step
+* Step06c produces a rectified TRACECOORDS representation intended primarily for visualization, quality control, and extraction algorithms that benefit from rectangular slit coordinates. The science mosaic in detector coordinates remains the authoritative science image.
 * No spectral centering or shifting is performed here
 * Geometry from Step04 is strictly preserved
 
@@ -242,11 +251,19 @@ runfile("step06_science_rectify/step06c_TRACECOORDS_representation.py")
 ## Pipeline context
 
 ```text
-Step04 → trace geometry
-Step05 → pixel flat
-Step06 → science preparation 
-Step07 → wavelength calibration
-Step08 → spectral extraction
+Step04 → Trace geometry and slit definitions
+
+Step05 → Pixel-flat calibration
+
+Step06a → Build final science mosaic
+
+Step06b → Apply pixel-flat correction
+
+Step06c → Generate optional TRACECOORDS representation
+
+Step07 → Wavelength calibration
+
+Step08 → Spectral extraction
 ```
 
 ---
