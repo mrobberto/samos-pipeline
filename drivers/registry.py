@@ -63,7 +63,7 @@ SCRIPT_REGISTRY: tuple[Stage, ...] = (
           sets=("EVEN", "ODD"), args_template="--set {set}"),
     Stage("08b",  "pipeline/step08_extract1d/step08b_merge_even_odd.py",            "Merge EVEN and ODD extracted spectra"),
     Stage("08c",  "pipeline/step08_extract1d/step08c_attach_wavelength.py",         "Attach wavelength vectors to extracted spectra"),
-    Stage("09",   "pipeline/step09_oh_refine/step09_abab_driver.py",                "Full OH cleanup and preferred-spectrum selection (A/B/A/B)"),
+    Stage("09",   "pipeline/step09_oh_refine/step09_production_driver.py",          "Production OH refinement and residual-sky cleanup"),
     Stage("10a",  "pipeline/step10_telluric/step10a_build_telluric_template.py",    "Build empirical O2 telluric template"),
     Stage("10b",  "pipeline/step10_telluric/step10b_apply_telluric.py",             "Apply O2 telluric correction"),
     Stage("11a",  "pipeline/step11_fluxcal/step11a_extract_header_radec_resilient.py", "Extract RA/DEC and slit metadata"),

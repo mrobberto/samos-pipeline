@@ -126,22 +126,22 @@ NAME_ARC_WAVELENGTH_TWEAKED = "arc_1d_wavelength_all_trial_tweak.fits"
 NAME_EXTRACT1D_EVEN = "extract1d_optimal_ridge_even.fits"
 NAME_EXTRACT1D_ODD = "extract1d_optimal_ridge_odd.fits"
 NAME_EXTRACT1D_ALL = "extract1d_optimal_ridge_all.fits"
-NAME_EXTRACT1D_WAV = "extract1d_optimal_ridge_all_wav.fits"
+NAME_EXTRACT1D_WAV = "extract1d_optimal_ridge_all_varfix_wavfix.fits"
 
 # Step09: ABAB/OH cleanup
-NAME_OH_SHIFT_CSV = "oh_shift_table.csv"
+NAME_OH_SHIFT_CSV = "oh_shifts.csv"
 NAME_OH_SHIFT_QC_CSV = "QC_OH_BG_registration.csv"
-NAME_EXTRACT1D_OHCLEAN = "extract1d_optimal_ridge_all_wav_ohclean.fits"
-NAME_EXTRACT1D_OHREF = "extract1d_optimal_ridge_all_wav_OHref.fits"
+NAME_EXTRACT1D_OHCLEAN = "extract1d_optimal_ridge_all_varfix_wavfix_OHref_skyclean099.fits"
+NAME_EXTRACT1D_OHREF = "extract1d_optimal_ridge_all_varfix_wavfix_OHref.fits"
 NAME_EXTRACT1D_STEP09_ABAB = "extract1d_optimal_ridge_all_wav_step09_abab_preferred.fits"
 NAME_EXTRACT1D_STEP09_CONSENSUS = (
     "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus.fits"
 )
 
 # Step10: telluric correction
-NAME_TELLURIC_TEMPLATE = "telluric_O2_template.fits"
+NAME_TELLURIC_TEMPLATE = "telluric_O2_template_skyclean099_varfix.fits"
 NAME_EXTRACT1D_TELLCOR = (
-    "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus_tellcorr.fits"
+    "extract1d_skyclean099_tellcorr_validated.fits"
 )
 
 # Step11: flux calibration
@@ -434,11 +434,14 @@ def build_oh_products(profile: ModuleType) -> None:
         profile,
         EXTRACT1D_STEP09_ABAB=profile.ST09 / NAME_EXTRACT1D_STEP09_ABAB,
         EXTRACT1D_STEP09_CONSENSUS=profile.ST09 / NAME_EXTRACT1D_STEP09_CONSENSUS,
-        EXTRACT1D_OHREF=profile.ST09 / NAME_EXTRACT1D_OHREF,
+        OH_SHIFT_CSV=profile.ST09 / NAME_OH_SHIFT_CSV,
+        EXTRACT1D_OHREF=profile.ST08_EXTRACT1D / NAME_EXTRACT1D_OHREF,
     )
 
-    # The current downstream science product from Step09 is the consensus ABAB product.
-    profile.EXTRACT1D_OHCLEAN = profile.EXTRACT1D_STEP09_CONSENSUS
+    # Frozen production Step09 product: fresh OH refinement + skyclean099.
+    profile.EXTRACT1D_OHCLEAN = (
+        profile.ST08_EXTRACT1D / NAME_EXTRACT1D_OHCLEAN
+    )
 
 
 def build_telluric_products(profile: ModuleType) -> None:
