@@ -63,8 +63,9 @@ SCIENTIFIC METHOD
 
 2. Sky estimation (row-first, with fallback)
    - Primary: row-by-row sky estimation excluding object aperture
-   - Rejects bright pixels via sigma-clipping
-   - Applies low-tail selection to avoid object contamination
+   - Uses all valid off-object pixels
+   - Applies symmetric robust clipping around the median
+   - Does not use low-tail selection
    - Fallback: pooled sky from neighboring rows (Y ± YSKYWIN)
    - Final fallback: continuity from previous valid row
 
@@ -74,10 +75,10 @@ SCIENTIFIC METHOD
 3. Optimal extraction (Horne-style)
    - Gaussian spatial weighting centered on X0(y)
    - Per-slit PSF width derived from Step08a1 FWHM
-   - Variance includes:
-       • Poisson noise
-       • read noise
-       • sky noise
+   - Variance is propagated in count-rate units, (ADU/s)^2, using:
+       • Poisson noise scaled by the total combined exposure time
+       • read noise from the contributing exposures
+       • empirical local sky scatter
 
 4. Aperture-loss correction
    - Computes fraction of PSF inside valid TRACECOORDS region
@@ -104,6 +105,8 @@ DESIGN NOTES
 - Preserves compatibility with Step08b/08c
 - Overwrites placeholder spectral columns from Step08a1
 - Designed to work with manual intervention via CSV
+- Current variance model assumes the full Step06 TOTEXP/NCOMBINE for every valid pixel;
+  a future Step06 effective-exposure map will be needed for exact sigma-clipped-pixel variances
 
 DOES NOT DO
 -----------
@@ -136,6 +139,7 @@ import config
 parser = argparse.ArgumentParser(description="SAMOS Step08a2 1D extraction")
 parser.add_argument("--set", choices=["EVEN", "ODD"], required=True, help="Slit set to process")
 parser.add_argument("--csv", default="", help="Optional explicit slit-quality CSV")
+parser.add_argument("--out", default="", help="Optional explicit output FITS path; default is the canonical Step08a2 product")
 args = parser.parse_args()
 SET_TAG = args.set.upper()
 
@@ -152,7 +156,7 @@ ST08 = Path(config.ST08_EXTRACT1D)
 ANALYSIS_FITS = ST08 / f"trace_analysis_optimal_ridge_{SET_TAG.lower()}.fits"
 
 # 08a2 output: real extracted spectra
-OUT_FITS = ST08 / f"extract1d_optimal_ridge_{SET_TAG.lower()}.fits"
+OUT_FITS = Path(args.out) if args.out else ST08 / f"extract1d_optimal_ridge_{SET_TAG.lower()}.fits"
 
 # editable slit-quality table from 08a1
 CSV = Path(args.csv) if args.csv else ST08 / f"step08a_slit_quality_{SET_TAG.lower()}.csv"
@@ -162,8 +166,26 @@ if not ANALYSIS_FITS.exists():
 
 if not CSV.exists():
     raise FileNotFoundError(f"Quality CSV not found. Run 08a1 first: {CSV}")
-    
-    
+
+# Step06 default products are exposure-time-weighted count-rate mosaics (ADU/s).
+# Read the integration metadata from the TRACECOORDS parent product so the
+# extraction variance is computed in the same rate units as the data.
+with fits.open(IN_FITS, memmap=False) as _h06meta:
+    _phdr = _h06meta[0].header
+    RATE_INPUT = bool(_phdr.get("NORATE", False))
+    TOTAL_EXPTIME_S = float(_phdr.get("TOTEXP", np.nan))
+    NCOMBINE = int(_phdr.get("NCOMBINE", 0))
+
+if not RATE_INPUT:
+    raise RuntimeError(
+        f"{IN_FITS.name}: Step08a2 currently requires a Step06 count-rate product "
+        "with NORATE=True (ADU/s)."
+    )
+if not np.isfinite(TOTAL_EXPTIME_S) or TOTAL_EXPTIME_S <= 0:
+    raise RuntimeError(f"{IN_FITS.name}: missing/invalid TOTEXP={TOTAL_EXPTIME_S}")
+if NCOMBINE <= 0:
+    raise RuntimeError(f"{IN_FITS.name}: missing/invalid NCOMBINE={NCOMBINE}")
+
 W_OBJ = 3.0
 GAP = 0.0
 YSKYWIN = 3
@@ -210,6 +232,44 @@ def sigma_clip_high_mask(x: np.ndarray, k: float = 3.0, iters: int = 2) -> np.nd
         s = mad_sigma(x[ok])
         if not np.isfinite(s) or s <= 0:
             break
+    return ok
+
+
+def sigma_clip_symmetric_mask(
+    x: np.ndarray,
+    k: float = 3.0,
+    iters: int = 2,
+) -> np.ndarray:
+    # Symmetric robust clipping around the median for local sky pixels.
+    x = np.asarray(x, float)
+    finite = np.isfinite(x)
+    ok = finite.copy()
+
+    # MAD is not well determined for very small samples; retain all finite
+    # pixels rather than introducing an asymmetric selection.
+    if ok.sum() < 5:
+        return ok
+
+    for _ in range(int(iters)):
+        vals = x[ok]
+        if vals.size < 5:
+            break
+
+        med = float(np.median(vals))
+        sig = float(mad_sigma(vals))
+        if not np.isfinite(sig) or sig <= 0:
+            break
+
+        new_ok = finite & (np.abs(x - med) <= float(k) * sig)
+
+        if new_ok.sum() < SKY_NMIN:
+            break
+        if np.array_equal(new_ok, ok):
+            ok = new_ok
+            break
+
+        ok = new_ok
+
     return ok
 
 
@@ -287,13 +347,15 @@ def estimate_sky_row(row: np.ndarray, x0: float) -> tuple[float, int, float]:
     if vals.size < SKY_NMIN:
         return np.nan, 0, np.nan
 
-    # Use faintest valid outside-aperture pixels.
-    # For very narrow slits, keep at least 2–3 pixels.
-    frac = 0.35
-    nkeep = max(SKY_NMIN, int(np.ceil(frac * vals.size)))
-    nkeep = min(nkeep, vals.size)
-
-    use = np.sort(vals)[:nkeep]
+    # Neutral robust row-sky estimator.
+    # Use all valid off-object pixels and reject only symmetric outliers.
+    # This avoids the low bias introduced by selecting the faintest 35%.
+    ok = sigma_clip_symmetric_mask(
+        vals,
+        k=SKY_CLIP_K,
+        iters=SKY_CLIP_ITERS,
+    )
+    use = vals[ok]
 
     if use.size < SKY_NMIN:
         return np.nan, 0, np.nan
@@ -307,7 +369,13 @@ def estimate_sky_row(row: np.ndarray, x0: float) -> tuple[float, int, float]:
 
     return skylev, int(use.size), skysig
 
-def extract_one_slit(img: np.ndarray, x0: np.ndarray, profile_sigma_slit: float):
+def extract_one_slit(
+    img: np.ndarray,
+    x0: np.ndarray,
+    profile_sigma_slit: float,
+    total_exptime_s: float,
+    ncombine: int,
+):
     """
     Extract one slit in TRACECOORDS using a ridge-centered Gaussian-weighted extraction.
 
@@ -328,6 +396,10 @@ def extract_one_slit(img: np.ndarray, x0: np.ndarray, profile_sigma_slit: float)
     - SKY stores the scalar sky level used for each row
     - The pooled-sky fallback is deliberately permissive: if left/right sky
       windows are too sparse, it uses all valid pixels outside the object aperture
+    - Input pixels are count rates (ADU/s). Variances are therefore computed in
+      (ADU/s)^2 using the total combined integration time.
+    - Until Step06 propagates a per-pixel effective-exposure map, every valid
+      output pixel is assumed to have the full total_exptime_s and ncombine.
     """
     ny, nx = img.shape
     xx = np.arange(nx, dtype=float)
@@ -473,12 +545,19 @@ def extract_one_slit(img: np.ndarray, x0: np.ndarray, profile_sigma_slit: float)
         sky[y] = float(skylev)
 
         # Horne-style weighted extraction.
-        var_pix = (
-            np.abs(row[obj_mask]) * GAIN_E_PER_ADU
-            + (READ_NOISE_E ** 2)
-            + (skysig[y] * GAIN_E_PER_ADU) ** 2
-        )
-        var_pix = np.asarray(var_pix, float)
+        #
+        # The Step06 science mosaic is in ADU/s.  Keep the variance in matching
+        # rate units, (ADU/s)^2:
+        #   Poisson:   rate / (gain * total exposure)
+        #   read noise: Nread * [RN / (gain * total exposure)]^2
+        #   local sky scatter: SKYSIG^2 (already measured in ADU/s)
+        rate = np.maximum(row[obj_mask], 0.0)
+        poisson_var = rate / (GAIN_E_PER_ADU * float(total_exptime_s))
+        read_var = float(ncombine) * (
+            READ_NOISE_E / (GAIN_E_PER_ADU * float(total_exptime_s))
+        ) ** 2
+        sky_var = float(skysig[y]) ** 2 if np.isfinite(skysig[y]) else 0.0
+        var_pix = np.asarray(poisson_var + read_var + sky_var, float)
 
         prof_use = prof[obj_mask]
         den = np.nansum((prof_use ** 2) / np.maximum(var_pix, 1e-6))
@@ -543,6 +622,11 @@ with fits.open(IN_FITS, memmap=False) as h06, fits.open(ANALYSIS_FITS, memmap=Fa
     out_hdus[0].header["TRACESET"] = (SET_TAG, "EVEN or ODD")
     out_hdus[0].header["ANAFITS"] = ANALYSIS_FITS.name
     out_hdus[0].header["QUALCSV"] = CSV.name
+    out_hdus[0].header["S8SKYMTH"] = ("ROBMED", "All off-object pixels; symmetric MAD clipping")
+    out_hdus[0].header["TOTEXP"] = (TOTAL_EXPTIME_S, "Total integration time used in rate variance")
+    out_hdus[0].header["NCOMBINE"] = (NCOMBINE, "Number of combined science exposures")
+    out_hdus[0].header["VARMOD"] = ("RATE_TOTEXP", "Step08a2 variance model")
+    out_hdus[0].header["VARUNIT"] = ("(ADU/s)^2", "Units of VAR and VAR_APCORR")
     for h in h08[1:]:
         slit = (h.name or "").upper()
         if slit not in imgs or slit not in df.index:
@@ -564,7 +648,9 @@ with fits.open(IN_FITS, memmap=False) as h06, fits.open(ANALYSIS_FITS, memmap=Fa
         use = int(row["USE"]) if "USE" in row.index and pd.notna(row["USE"]) else int(row["GOOD"])
         
         # Always compute aperture-sum products so OBJ_PRESKY is available for all slits.
-        arrays = extract_one_slit(img, x0, profile_sigma_slit)
+        arrays = extract_one_slit(
+            img, x0, profile_sigma_slit, TOTAL_EXPTIME_S, NCOMBINE
+        )
         arrays["YPIX"] = np.arange(img.shape[0], dtype=np.int32)
         
         # If slit is not selected for local sky-subtracted extraction, preserve only
@@ -588,7 +674,11 @@ with fits.open(IN_FITS, memmap=False) as h06, fits.open(ANALYSIS_FITS, memmap=Fa
         newh.header["S08GOOD"] = int(row["GOOD"])
         newh.header["S08USE"] = int(use)
         newh.header["S08CLAS"] = str(row["CLASS"])
+        newh.header["S8SKYMTH"] = ("ROBMED", "All off-object pixels; symmetric MAD clipping")
         newh.header["PSFSIG"] = (float(profile_sigma_slit), "Gaussian sigma used for extraction")
+        newh.header["TOTEXP"] = (TOTAL_EXPTIME_S, "Total integration time used in rate variance")
+        newh.header["NCOMBINE"] = (NCOMBINE, "Number of combined science exposures")
+        newh.header["VARMOD"] = ("RATE_TOTEXP", "Step08a2 variance model")
         set_hdr_float_safe(newh.header, "S08FWHM", fwhm_slit, "Brightest-block FWHM from 08a1/CSV")
         set_hdr_float_safe(
             newh.header,
@@ -599,5 +689,6 @@ with fits.open(IN_FITS, memmap=False) as h06, fits.open(ANALYSIS_FITS, memmap=Fa
         
         out_hdus.append(newh)
 
+OUT_FITS.parent.mkdir(parents=True, exist_ok=True)
 fits.HDUList(out_hdus).writeto(OUT_FITS, overwrite=True)
 print(f"Wrote {OUT_FITS}")
