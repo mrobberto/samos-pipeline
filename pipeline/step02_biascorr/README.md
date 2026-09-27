@@ -82,14 +82,15 @@ The output FITS headers include provenance information from the subtraction proc
 
 From the pipeline root:
 
-```python
-runfile("step02_biascorr/step02_biascorr.py")
+```bash
+PYTHONPATH=. python pipeline/step02_biascorr/step02_biascorr.py
 ```
 
-or from command line:
-
+Using the main driver instead:
 ```bash
-python step02_biascorr/step02_biascorr.py
+PYTHONPATH=. python drivers/run_pipeline.py \
+    --from-step 02 \
+    --to-step 02
 ```
 
 ---
