@@ -198,6 +198,9 @@ def parse_args():
                     help="Step07 arc_master.fits (contains SLITLIST and SHIFT_TO_MASTER)")
     ap.add_argument("--wavesol", dest="master_sol", type=str, default="",
                     help="Step07 arc_master_wavesol.fits (contains WVC* polynomial)")
+    ap.add_argument("--wave-mef", dest="wave_mef", type=str, default="",
+                    help=("Explicit Step07h wavelength MEF. If omitted, preserve the "
+                          "legacy baseline/trial-tweak auto-selection behavior."))
     ap.add_argument("--ywin0", type=float, default=np.nan,
                     help="Override YWIN0 if not present in master solution header")
     ap.add_argument("--firstlen", type=int, default=-1,
@@ -212,7 +215,10 @@ def main():
 
     st07 = Path(config.ST07_WAVECAL)
     st08 = Path(config.ST08_EXTRACT1D)
-    active_wave_mef = pick_active_wavelength_mef(st07)
+    active_wave_mef = (
+        Path(args.wave_mef).expanduser() if args.wave_mef
+        else pick_active_wavelength_mef(st07)
+    )
 
     infile = Path(args.infile) if args.infile else (st08 / "extract1d_optimal_ridge_all.fits")
     outfile = Path(args.outfile) if args.outfile else (st08 / "extract1d_optimal_ridge_all_wav.fits")
@@ -225,6 +231,8 @@ def main():
         raise FileNotFoundError(master_arc)
     if not master_sol.exists():
         raise FileNotFoundError(master_sol)
+    if not active_wave_mef.exists():
+        raise FileNotFoundError(active_wave_mef)
     if outfile.exists() and not args.overwrite:
         raise FileExistsError(f"{outfile} exists. Use --overwrite to replace it.")
 
@@ -232,6 +240,7 @@ def main():
     log.info("OUTFILE   = %s", outfile)
     log.info("MASTERARC = %s", master_arc)
     log.info("MASTERSOL = %s", master_sol)
+    log.info("WAVEMEF   = %s", active_wave_mef)
 
     shift_to_master = read_shift_to_master(master_arc)
     log.info("Loaded SHIFT_TO_MASTER for %d slits", len(shift_to_master))
@@ -329,22 +338,30 @@ def main():
                     y_eff = (y_det - ywin0) + shift
                     
                     nrow = len(y_local)
-                    
-                    if lam_full.size == nrow:
-                        lam = lam_full.copy()
-                    else:
-                        # Step07h wavelength MEF may preserve the full arc/extraction length,
-                        # while Step08 extraction tables may be trimmed. Align by YPIX index.
-                        idx = np.asarray(y_local, int)
-                    
-                        lam = np.full(nrow, np.nan, dtype=np.float32)
-                        ok_idx = (idx >= 0) & (idx < lam_full.size)
-                        lam[ok_idx] = lam_full[idx[ok_idx]]
-                    
-                        log.info(
-                            "%s: active wavelength length %d != table length %d; mapped by YPIX",
-                            slit, lam_full.size, nrow,
+
+                    # Step07h stores wavelength on the MASTER-window-local grid:
+                    #   index 0 <-> detector row YWIN0
+                    # and its wavelength vector already includes SHIFT_TO_MASTER.
+                    # Therefore an extracted row must be mapped by its detector row,
+                    # not by bare YPIX.  This remains true even when the two arrays
+                    # happen to have the same length.
+                    mef_index_f = y_det - ywin0
+                    mef_index = np.rint(mef_index_f).astype(int)
+                    if not np.allclose(mef_index_f, mef_index, atol=1e-6, rtol=0):
+                        raise ValueError(
+                            f"{slit}: detector-to-window mapping is not integer-valued; "
+                            f"Y0DET={y0det}, YWIN0={ywin0}"
                         )
+
+                    lam = np.full(nrow, np.nan, dtype=np.float32)
+                    ok_idx = (mef_index >= 0) & (mef_index < lam_full.size)
+                    lam[ok_idx] = lam_full[mef_index[ok_idx]]
+
+                    log.info(
+                        "%s: mapped Step07h wavelength MEF by detector-window index "
+                        "(Y0DET=%s; index range %d..%d)",
+                        slit, y0det, int(np.nanmin(mef_index)), int(np.nanmax(mef_index)),
+                    )
         
             
             # Optional per-slit manual wavelength zero-point correction.
@@ -362,8 +379,9 @@ def main():
             new_hdu.header["YWIN0"] = (float(ywin0), "MASTER window start used for wavelength mapping")
             new_hdu.header["FIRSTLEN"] = (int(firstlen), "MASTER window length (poly domain)")
             new_hdu.header["SHIFT2M"] = (float(shift), "SHIFT_TO_MASTER used to attach wavelength")
-            new_hdu.header["YMAP"] = ("YDET=(Y0DET+YPIX); y=(YDET-YWIN0)+SHIFT2M",
+            new_hdu.header["YMAP"] = ("MEFIDX=Y0DET+YPIX-YWIN0; y_eff=MEFIDX+SHIFT2M",
                                        "Step08c wavelength mapping")
+            new_hdu.header["WAVMAP"] = ("DETWIN", "Step07h MEF indexed by detector-window coordinate")
             new_hdu.header["WAVOFFNM"] = (float(wave_offset_nm), "Manual wavelength zero-point correction added to LAMBDA_NM")
             new_hdu.header.add_history("Added/updated LAMBDA_NM using Step07 master polynomial and SHIFT_TO_MASTER.")
             new_hdu.header["WAVEMEF"] = (active_wave_mef.name, "Step07h wavelength MEF used")
