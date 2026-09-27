@@ -14,7 +14,7 @@ For each slit, the summary page includes:
 
 Display policy
 --------------
-The 1D spectrum panel prefers the final Step11 calibrated spectrum:
+The 1D spectrum panel prefers the final Step12e calibrated spectrum:
 1) FLUX_FLAM_STELLARRESP
 2) FLUX_FLAM
 3) FLUX_TELLCOR_O2
@@ -689,9 +689,9 @@ def _close_cache():
 # CLI
 # -----------------------------------------------------------------------------
 def parse_args():
-    p = argparse.ArgumentParser(description="Create per-slit Step11 summary PDF pages.")
+    p = argparse.ArgumentParser(description="Create per-slit Step12 final-summary PDF pages.")
 
-    p.add_argument("--extract", required=True, help="Input Step11 flux-calibrated MEF FITS")
+    p.add_argument("--extract", required=True, help="Input Step12 final-calibrated MEF FITS")
     p.add_argument("--photcat", required=True, help="Step11 photometry/RADEC catalog CSV")
     p.add_argument("--image", required=True, help="WCS imaging FITS for postage-stamp cutouts")
     p.add_argument("--detector", required=True, help="Detector-frame science image FITS")
@@ -713,9 +713,9 @@ def parse_args():
     p.add_argument("--rect-ridge-halfwidth", type=int, default=6)
     p.add_argument("--sky-gap", type=int, default=2)
 
-    p.add_argument("--lambda-r", type=float, default=616.0)
-    p.add_argument("--lambda-i", type=float, default=779.0)
-    p.add_argument("--lambda-z", type=float, default=916.0)
+    p.add_argument("--lambda-r", type=float, default=613.8440330950057)
+    p.add_argument("--lambda-i", type=float, default=776.79762950059)
+    p.add_argument("--lambda-z", type=float, default=914.5992987637427)
 
     p.add_argument(
         "--spec-col",
@@ -931,7 +931,7 @@ def main():
                 )
                 axA2.set_title(f"       RECTIFIED + EXTRACTION REGIONS", fontsize=10)
 
-                # C: sky map + photometry
+                # D: sky map + photometry
                 axD = fig.add_subplot(gs[0, 2])
                 axD.scatter(ra_all, dec_all, s=6, alpha=0.35)
                 axD.scatter([ra], [dec], s=60, marker="*", linewidths=0.8)
@@ -967,8 +967,7 @@ def main():
                     bbox=dict(boxstyle="round,pad=0.3", alpha=0.15),
                 )
 
-                # D: imaging cutout
-                # ------------------------------------------------------------------------------------
+                # B: imaging cutout
                 vmin, vmax = _robust_limits(stamp, float(args.stretch))
                 axB, _ = _add_stamp_axes(fig, gs[0, 3], stamp, stamp_wcs, "Imaging cutout")
                 axB.images[-1].set_clim(vmin, vmax)
@@ -982,14 +981,14 @@ def main():
                     bbox=dict(boxstyle="round,pad=0.2", alpha=0.15),
                 )
 
-                # E: final 1D spectrum panel (prefer FLUX_FLAM when available) + photometry points
-                # ------------------------------------------------------------------------------------
+                # C: final 1D spectrum panel (prefer stored Step12e product) + photometry points
                 axC = fig.add_subplot(gs[1, :])
 
                 lam_disp, flux_disp, ylab, line_color = _choose_display_spectrum(tab, lam_col)
-                if slit == 31:
-                    flux_disp[500:1000] = flux_disp[500:1000] * 3
                 
+                # This panel is logarithmic below, so only positive samples are
+                # displayed. This is a display choice only; the Step12 science
+                # product itself retains negative sky-subtracted flux pixels.
                 ok = np.isfinite(lam_disp) & np.isfinite(flux_disp) & (flux_disp > 0)
                 
                 if ok.sum() > 0:
@@ -1002,39 +1001,35 @@ def main():
                 axC.set_ylabel(ylab)
                 axC.grid(True, alpha=0.2)
                 axC.set_xlim(args.xmin, args.xmax)
-                
-                # Reference wavelength beyond which calibration is extrapolated
-                axC.axvline(930.0, color="0.5", ls="--", lw=1)
-                
+
+                # Trusted Step12 response interval comes from the final-product
+                # header. Outside this interval Step12e holds the nearest
+                # response boundary; it does not polynomial-extrapolate.
+                trust_lo = float(hdr_spec.get("TRUSTLO", np.nan))
+                trust_hi = float(hdr_spec.get("TRUSTHI", np.nan))
+                if np.isfinite(trust_lo):
+                    axC.axvline(trust_lo, color="0.5", ls=":", lw=1)
+                if np.isfinite(trust_hi):
+                    axC.axvline(trust_hi, color="0.5", ls=":", lw=1)
+
                 # --- Step12e status box ---
-                has_norm = "?"
-                norm_band = "?"
-                norm_val = np.nan
-                
-                if "HAS_PHOTNORM" in tab.columns.names:
-                    try:
-                        has_norm = int(np.nanmedian(np.asarray(tab["HAS_PHOTNORM"], float)))
-                    except Exception:
-                        pass
-                
-                if "NORM_BAND" in tab.columns.names:
-                    try:
-                        nb = tab["NORM_BAND"][0]
-                        norm_band = nb.decode().strip() if isinstance(nb, bytes) else str(nb).strip()
-                    except Exception:
-                        pass
-                
-                if "NORM_STELLARRESP" in tab.columns.names:
-                    try:
-                        norm_val = float(np.nanmedian(np.asarray(tab["NORM_STELLARRESP"], float)))
-                    except Exception:
-                        pass
-                
+                global_i = float(hdr_spec.get("S12GIN", np.nan))
+                edge_policy = str(hdr_spec.get("S12EDGE", "?")).strip()
+                photnorm = hdr_spec.get("PHOTNORM", False)
+
+                trusted_txt = (
+                    f"{trust_lo:.1f}--{trust_hi:.1f} nm"
+                    if np.isfinite(trust_lo) and np.isfinite(trust_hi)
+                    else "?"
+                )
+                global_txt = f"{global_i:.8f}" if np.isfinite(global_i) else "?"
+
                 status = (
                     f"display = {ylab}\n"
-                    f"HAS_PHOTNORM = {has_norm}\n"
-                    f"NORM_BAND = {norm_band}\n"
-                    f"NORM = {norm_val:.3g}"
+                    f"global C_i = {global_txt}\n"
+                    f"trusted = {trusted_txt}\n"
+                    f"edge = {edge_policy}\n"
+                    f"per-object photnorm = {bool(photnorm)}"
                 )
                 
                 axC.text(
@@ -1091,23 +1086,29 @@ def main():
                     if np.isfinite(p1) and np.isfinite(p99) and p99 > p1:
                         axC.set_ylim(p1, p99)
                 '''        
-                # --- LOG SCALE: compact limits centered on the displayed spectrum ---
-                spec_y = flux_disp[ok]
-                spec_y = spec_y[np.isfinite(spec_y) & (spec_y > 0)]
+                # --- LOG SCALE: robust lower/upper limits from plotted spectrum + photometry ---
+                yscale = []
                 
-                if spec_y.size > 20:
-                    # Use the displayed spectrum only for axis limits.
-                    # Ignore photometric points so they do not expand the scale.
-                    p05, p95 = np.nanpercentile(spec_y, [5, 95])
+                if ok.sum() > 10:
+                    yscale.append(flux_disp[ok])
                 
-                    if np.isfinite(p05) and np.isfinite(p95) and p95 > p05:
-                        ymin = p05 / 3.0      # at most one decade below lower spectrum envelope
-                        ymax = p95 * 3.0       # modest headroom above continuum
+                if ylab in ["FLUX_FLAM", "FLUX_FLAM_STELLARRESP"] and phot_points:
+                    yscale.append(np.asarray([p[2] for p in phot_points], float))
+
+                if len(yscale) > 0:
+                    yy = np.concatenate(yscale)
+                    yy = yy[np.isfinite(yy) & (yy > 0)]
+
+                    if yy.size > 10:
+                        ymin = np.nanpercentile(yy, 1) / 1.5
+                        ymax = np.nanpercentile(yy, 99) * 1.5
                 
-                        axC.set_yscale("log")
-                        axC.set_ylim(ymin, ymax)
-                        print(slit,p05,p95,ymin,ymax)
-                        
+                        if np.isfinite(ymin) and np.isfinite(ymax) and ymax > ymin:
+                            axC.set_yscale("log")
+                            axC.set_ylim(ymin, ymax)
+                            axC.axhline(ymin, color="0.7", ls=":", lw=0.8)
+
+
                 fig.suptitle(f"{slit}  (Step12 final summary)", fontsize=12)
                 pdf.savefig(fig)
                 plt.close(fig)
