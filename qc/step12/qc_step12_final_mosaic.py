@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-QC Step09 — final sky-subtracted spectra mosaic.
+QC Step12 — final spectrophotometric spectra mosaic.
 
-Creates a paper-style per-slit mosaic from the final Step11 product,
-normally using STELLAR_CONSENSUS.
+Creates a paper-style per-slit mosaic from the stored Step12 final product.
+The default plotted column is FLUX_FLAM_STELLARRESP.
 
-Example
--------
-PYTHONPATH=. python ./qc/step12/qc_step12_final_mosaic.py \
-  --in     ./products/Run8_Dolidze25/reduced/11_fluxcal/extract1d_fluxcal.fits \
-  --outdir ./products/Run8_Dolidze25/qc/12_finalcal \
-  --column STELLAR_CONSENSUS
+Important
+---------
+This QC displays the column already stored in the final FITS product. It does
+not reconstruct or re-apply RESP_STELLAR_MASTER. Therefore --column selects
+an actual stored data column rather than requesting a new correction.
+
+SkyMapper r/i/z points, when requested, are shown only as visual broadband
+anchors at the same pivot wavelengths used by the Step12 response calibration.
 """
 
 import argparse
@@ -33,11 +35,15 @@ O2_A_REF = 760.5
 BAND_B = (685.0, 690.0)
 BAND_A = (758.0, 770.0)
 
+PIVOT_R_NM = 613.8440330950057
+PIVOT_I_NM = 776.79762950059
+PIVOT_Z_NM = 914.5992987637427
+
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Step12 final stellar-response spectra mosaic QC")
+    p = argparse.ArgumentParser(description="Step12 final spectrophotometric spectra mosaic QC")
     p.add_argument("--column", default="FLUX_FLAM_STELLARRESP", help="Column to plot")
-    p.add_argument("--in", dest="infile", required=True, help="Input Step09 final FITS")
+    p.add_argument("--in", dest="infile", required=True, help="Input Step12 final FITS")
     p.add_argument("--outdir", required=True, help="Output QC directory")
     p.add_argument("--maxslits", type=int, default=0, help="0 = all slits")
     p.add_argument("--xlo", type=float, default=590.0)
@@ -125,44 +131,20 @@ def main():
             if "LAMBDA_NM" not in names:
                 continue
 
-            col = None
-            
-            # --- Preferred display logic ---
-            display_mode = None
-            
-            if (
-                "FLUX_FLAM_STELLARRESP" in names and
-                np.isfinite(np.asarray(h.data["FLUX_FLAM_STELLARRESP"], float)).sum() > 0
-            ):
-                flux = np.asarray(h.data["FLUX_FLAM_STELLARRESP"], float)
-                display_mode = "FLAM_CORRECTED"
-            
-            else:
-                base_col = None
-            
-                for c in [
-                    "FLUX_FLAM",
-                    "FLUX_TELLCOR_O2",
-                    "STELLAR_CONSENSUS",
-                    "FLUX",
-                ]:
-                    if c in names and np.isfinite(np.asarray(h.data[c], float)).sum() > 0:
-                        base_col = c
-                        break
-            
-                if base_col is None:
-                    print(f"WARNING: {h.name} has no usable display spectrum; skipped")
-                    continue
-            
-                flux = np.asarray(h.data[base_col], float).copy()
-            
-                if "RESP_STELLAR_MASTER" in names:
-                    resp = np.asarray(h.data["RESP_STELLAR_MASTER"], float)
-                    good = np.isfinite(resp) & (resp > 0)
-                    flux[good] *= resp[good]
-            
-                display_mode = f"{base_col}_CORRECTED"
-            
+            # Display exactly the requested stored column. Do not silently
+            # reconstruct a Step12 correction from another spectrum column.
+            col = str(args.column).strip()
+            if col not in names:
+                print(f"WARNING: {h.name} lacks requested column {col}; skipped")
+                continue
+
+            flux = np.asarray(h.data[col], float)
+            if np.isfinite(flux).sum() == 0:
+                print(f"WARNING: {h.name} has no finite values in {col}; skipped")
+                continue
+
+            display_mode = col
+
             lam = np.asarray(h.data["LAMBDA_NM"], float)
             ok = np.isfinite(lam) & np.isfinite(flux)
             if ok.sum() < 10:
@@ -201,7 +183,7 @@ def main():
         flux = r["flux"]
 
         mode = r["mode"]
-        physical = "FLAM" in mode
+        physical = mode in {"FLUX_FLAM", "FLUX_FLAM_STELLARRESP"}
         line_color = "k" if physical else "crimson"
         ylabel = r"$f_\lambda$" if physical else r"ADU s$^{-1}$ $\AA^{-1}$"
 
@@ -213,22 +195,14 @@ def main():
         else:
             flux_plot = flux
         
-        #ax.plot(lam, flux_plot, color=line_color, linewidth=0.7)
-        ax.scatter(
-            lam,
-            flux_plot,
-            s=1,
-            c=line_color,
-            linewidths=0,
-            rasterized=True,
-        )
+        ax.plot(lam, flux_plot, color=line_color, linewidth=0.7)
         
         if physical and phot is not None:
             prow = phot.loc[phot["slit"] == r["slit"]]
         
             if len(prow) == 1:
                 prow = prow.iloc[0]
-                for band, lam_eff in {"r": 616.0, "i": 779.0, "z": 916.0}.items():
+                for band, lam_eff in {"r": PIVOT_R_NM, "i": PIVOT_I_NM, "z": PIVOT_Z_NM}.items():
                     mag_col = f"{band}_mag"
                     if mag_col in prow.index and np.isfinite(prow[mag_col]):
                         fphot = abmag_to_flam_cgs(float(prow[mag_col]), lam_eff)
@@ -263,24 +237,19 @@ def main():
 
         ax.set_xlim(args.xlo, args.xhi)
         ax.set_ylim(*safe_ylim(flux))
-        unit_tag = "FLAM corr." if physical else "rel. corr."
+        unit_tag = "final f_lambda" if mode == "FLUX_FLAM_STELLARRESP" else mode
         ax.set_title(f"{r['slit']}  {unit_tag}", fontsize=8)
         ax.grid(True, alpha=0.20)
 
     for j in range(len(rows), len(axes)):
         axes[j].axis("off")
 
-    fig.suptitle(
-        f"Step12 final stellar-response corrected spectra ({args.column})",
-        fontsize=16,
-    )
-    
     out_png = outdir / "QC_step12_final_spectra_subplots.png"
     out_pdf = outdir / "QC_step12_final_spectra_subplots.pdf"
 
     plt.tight_layout(rect=[0, 0, 1, 0.97])
     fig.suptitle(
-        "Step12 final spectra: navy = physical FLAM, red = relative ADU/s/A; gold points = SkyMapper",
+        f"Step12 final spectra ({args.column}): black = stored spectrum; gold points = SkyMapper",
         fontsize=16,
     )
     fig.savefig(out_png, dpi=150)
@@ -288,7 +257,7 @@ def main():
     plt.close(fig)
 
     print()
-    print("Step10 final mosaic QC")
+    print("Step12 final mosaic QC")
     print("  input :", infile)
     print("  column:", args.column)
     print("  slits :", len(rows))
