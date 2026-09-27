@@ -95,7 +95,7 @@ def pick_flux_column(cols):
     return None
 
 def pick_var_column(cols):
-    preferred = ["VAR", "VAR_ADU_S2", "VAR_APCORR", "VAR_TELLCOR_O2"]
+    preferred = ["VAR_APCORR", "VAR", "VAR_ADU_S2", "VAR_TELLCOR_O2"]
     cols_u = {c.upper(): c for c in cols}
     for key in preferred:
         if key in cols_u:
@@ -126,7 +126,7 @@ def fit_cont_sidebands(x, y, sb1, sb2, order=1):
 def window_vec(lam, flux, var, lo, hi, sb1, sb2, grid):
     m = finite(lam) & finite(flux) & (lam > lo) & (lam < hi)
     if m.sum() < 60:
-        return None, np.nan
+        return None, np.nan, np.nan
     x = lam[m].astype(float)
     y = flux[m].astype(float)
     v = var[m].astype(float) if var is not None else None
@@ -142,13 +142,13 @@ def window_vec(lam, flux, var, lo, hi, sb1, sb2, grid):
     if v is not None:
         v = v[good]
     if x.size < 20:
-        return None, np.nan
+        return None, np.nan, np.nan
     p = fit_cont_sidebands(x, y, sb1, sb2, order=1)
     if p is None:
-        return None, np.nan
+        return None, np.nan, np.nan
     cont = np.polyval(p, x)
     if not finite(cont).all() or np.nanmedian(cont) == 0:
-        return None, np.nan
+        return None, np.nan, np.nan
     yn = y / cont
     snr = np.nan
     if v is not None:
@@ -279,6 +279,19 @@ def main():
             d = hdu.data
             if d is None or not hasattr(d, "columns"):
                 continue
+
+            # Only genuine detected-source slitlets may contribute to the
+            # empirical telluric template.
+            s08use = int(hdu.header.get("S08USE", 0))
+            s08good = int(hdu.header.get("S08GOOD", s08use))
+            s08clas = str(hdu.header.get("S08CLAS", "")).strip().upper()
+            if (
+                s08use != 1
+                or s08good != 1
+                or s08clas in {"EMPTY", "NOSEED"}
+            ):
+                continue
+
             cols = d.columns.names
             if "LAMBDA_NM" not in cols:
                 continue

@@ -47,6 +47,18 @@ def parse_args():
         help="Output telluric-corrected MEF "
              "(default: ST10_TELLURIC/extract1d_optimal_ridge_all_wav_ohclean_tellcorr.fits)",
     )
+    p.add_argument(
+        "--max-shift-nm",
+        type=float,
+        default=1.0,
+        help="Maximum accepted absolute O2 template shift in either band (nm)",
+    )
+    p.add_argument(
+        "--max-obj-ratio",
+        type=float,
+        default=0.95,
+        help="Require fitted objective / no-telluric objective below this value",
+    )
     return p.parse_args()
 
 
@@ -127,7 +139,7 @@ def pick_flux_column(cols):
     return None
 
 def pick_var_column(cols):
-    preferred = ["VAR", "VAR_ADU_S2", "VAR_APCORR"]
+    preferred = ["VAR_APCORR", "VAR", "VAR_ADU_S2"]
     cols_u = {c.upper(): c for c in cols}
     for key in preferred:
         if key in cols_u:
@@ -353,6 +365,30 @@ def best_band_solution_grid_metric(lam_obs, fnorm, lamT, tauT, shift_grid, a_gri
 
     return best
 
+
+def accept_band_solution(sol, null_sol, max_shift_nm, max_obj_ratio):
+    """Return (accepted, objective_ratio, reason) for one O2 band."""
+    if sol is None:
+        return False, np.nan, "NO_FIT"
+    if not np.isfinite(sol.get("a", np.nan)) or sol["a"] <= 0:
+        return False, np.nan, "NONPOS_AMP"
+    if not np.isfinite(sol.get("shift", np.nan)):
+        return False, np.nan, "BAD_SHIFT"
+    if abs(sol["shift"]) > max_shift_nm:
+        return False, np.nan, "SHIFT"
+    if (
+        null_sol is None
+        or not np.isfinite(null_sol.get("obj", np.nan))
+        or null_sol["obj"] <= 0
+        or not np.isfinite(sol.get("obj", np.nan))
+    ):
+        return False, np.nan, "NO_NULL"
+    ratio = float(sol["obj"] / null_sol["obj"])
+    if ratio >= max_obj_ratio:
+        return False, ratio, "WEAK_GAIN"
+    return True, ratio, "OK"
+
+
 def add_or_replace_column(tab, name, data, fmt="E"):
     name_u = name.upper()
     cols = []
@@ -401,6 +437,8 @@ def main():
     out_hdus[0].header["TELLCOR"] = "O2_ABDECW"
     out_hdus[0].header["AWRCORE"] = (float(A_CORE_WEIGHT), "Step10 A-band core fit weight")
     out_hdus[0].header["AWRRED"] = (float(A_RED_WING_WEIGHT), "Step10 A-band red-wing fit weight")
+    out_hdus[0].header["TELMSH"] = (float(args.max_shift_nm), "Maximum accepted abs O2 shift (nm)")
+    out_hdus[0].header["TELOBJR"] = (float(args.max_obj_ratio), "Maximum fitted/null objective ratio")
     
     n_seen = n_written = n_ok = n_fail = n_varcorr = n_okA = n_okB = n_okAB = 0
     with fits.open(infile) as hdul:
@@ -439,50 +477,62 @@ def main():
                 band="B",
             )
                         
-            # Reject unphysical negative telluric amplitudes.
-            # Negative amplitude would imply inverse absorption / emission.
-            if solA is not None and solA["a"] <= 0:
-                solA = None
-            
-            if solB is not None and solB["a"] <= 0:
-                solB = None
-            """    
-            # Fallback: if the normal A-band fit fails, retry with looser criteria.
-            # Useful for slits with large wavelength residuals but obvious A-band absorption.
-            if solA is None:
-                solA = best_band_solution(
-                    lamA_obs,
-                    fnA,
-                    lamA,
-                    tauA,
-                    748.0,
-                    772.0,
-                    np.linspace(-8.0, +8.0, 641),
-                )                
-            """
+            # Validate each fitted band against a no-telluric baseline.
+            nullA = best_band_solution_grid_metric(
+                lamA_obs,
+                fnA,
+                lamA,
+                tauA,
+                np.array([0.0]),
+                np.array([0.0]),
+                band="A",
+            )
+            nullB = best_band_solution_grid_metric(
+                lamB_obs,
+                fnB,
+                lamB,
+                tauB,
+                np.array([0.0]),
+                np.array([0.0]),
+                band="B",
+            )
+
+            okA, ratio_A, reason_A = accept_band_solution(
+                solA, nullA, args.max_shift_nm, args.max_obj_ratio
+            )
+            okB, ratio_B, reason_B = accept_band_solution(
+                solB, nullB, args.max_shift_nm, args.max_obj_ratio
+            )
 
             print(
                 hdu.name,
                 "A:",
-                None if solA is None else (solA["shift"], solA["a"], solA["obj"]),
+                None if solA is None else (
+                    solA["shift"], solA["a"], solA["obj"], ratio_A, reason_A
+                ),
                 "B:",
-                None if solB is None else (solB["shift"], solB["a"], solB["obj"]),
-            )    
-            
-            
-            okA = solA is not None
-            okB = solB is not None
+                None if solB is None else (
+                    solB["shift"], solB["a"], solB["obj"], ratio_B, reason_B
+                ),
+            )
 
             if not (okA or okB):
                 tab2 = add_or_replace_column(d, "FLUX_TELLCOR_O2", np.asarray(flux, np.float32), fmt="E")
                 if var is not None:
                     tab2 = add_or_replace_column(tab2, "VAR_TELLCOR_O2", np.asarray(var, np.float32), fmt="E")
                 out_hdu = fits.BinTableHDU(data=tab2, name=hdu.name)
+                for k, v in hdu.header.items():
+                    if k not in out_hdu.header:
+                        out_hdu.header[k] = v
                 out_hdu.header["TELL_OK"] = False
                 out_hdu.header["TELL_OKA"] = False
                 out_hdu.header["TELL_OKB"] = False
                 out_hdu.header["TELL_IN"] = str(flux_col)
                 out_hdu.header["TELLVAR"] = (str(var_col) if var_col is not None else "NONE")
+                out_hdu.header["TELL_RA"] = (float(ratio_A) if np.isfinite(ratio_A) else -999.0, "A fitted/null objective ratio")
+                out_hdu.header["TELL_RB"] = (float(ratio_B) if np.isfinite(ratio_B) else -999.0, "B fitted/null objective ratio")
+                out_hdu.header["TELREJA"] = (str(reason_A), "A-band acceptance status")
+                out_hdu.header["TELREJB"] = (str(reason_B), "B-band acceptance status")
                 out_hdu.header["TELLBAND"] = "NONE"
                 out_hdus.append(out_hdu)
                 n_written += 1
@@ -530,6 +580,10 @@ def main():
             out_hdu.header["TELL_AA"] = float(a_A) if okA else -999.0
             out_hdu.header["TELL_AB"] = float(a_B) if okB else -999.0
             out_hdu.header["TELL_OBJ"] = float(np.nanmean(objs)) if objs else -999.0
+            out_hdu.header["TELL_RA"] = (float(ratio_A) if np.isfinite(ratio_A) else -999.0, "A fitted/null objective ratio")
+            out_hdu.header["TELL_RB"] = (float(ratio_B) if np.isfinite(ratio_B) else -999.0, "B fitted/null objective ratio")
+            out_hdu.header["TELREJA"] = (str(reason_A), "A-band acceptance status")
+            out_hdu.header["TELREJB"] = (str(reason_B), "B-band acceptance status")
             out_hdu.header["TELLBAND"] = "+".join(bands) if bands else "NONE"
             out_hdu.header["TELNOTE"] = ("O2 weighted AB dec", "Telluric note")
             out_hdus.append(out_hdu)
