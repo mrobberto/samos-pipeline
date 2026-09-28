@@ -192,12 +192,10 @@ def parse_args():
     p.add_argument("--mag-system", choices=["ab", "vega", "auto"], default="auto")
     p.add_argument("--vega-offsets", type=str, default=None,
                    help="Override Vega->AB offsets as 'r=0.16,i=0.37,z=0.54'")
-    p.add_argument("--mode", choices=["gray", "tilt"], default="gray")
     p.add_argument("--filters-dir", type=Path, default=None,
                    help="Optional directory containing filter curves")
     p.add_argument("--windows-nm", type=str, default=None,
                    help="Override rectangular windows as 'r=560-700,i=700-820,z=820-950'")
-    p.add_argument("--max-band-dispersion", type=float, default=0.20)
     p.add_argument("--min-overlap-points", type=int, default=10)
     return p.parse_args()
 
@@ -230,7 +228,7 @@ def main():
     if not Path(phot_csv).exists():
         raise FileNotFoundError(phot_csv)
     
-    out_fits = args.out_fits or (st11 / "Extract1D_fluxcal.fits")
+    out_fits = Path(args.out_fits) if args.out_fits else Path(config.EXTRACT1D_FLUXCAL)
     out_summary = args.out_summary or (st11 / "Step11_fluxcal_summary.csv")
     qa_plot = args.qa_plot or (st11 / "Step11_fluxcal_QA.png")
 
@@ -405,49 +403,42 @@ def main():
             good_bands = np.isfinite(Sb_vals)
             nband = int(good_bands.sum())
 
+            # Production Step11 absolute calibration:
+            # anchor each valid stellar spectrum to SkyMapper i only.
+            #
+            # The r band is not used for physical calibration because a
+            # substantial fraction of its passband lies below the formal
+            # 600-nm SAMOS cutoff.  The z-band scale is retained as a
+            # diagnostic; the common i-z spectral-response shape is handled
+            # separately in Step12.
             cal_mode = "NONE"
             S = np.nan
             alpha = np.nan
-            flag = "NOMAG" if nband == 0 else "OK"
+            flag = "NOMAG" if nband == 0 else "NO_I_ANCHOR"
 
-            if nband == 0:
-                flam_cal = np.full_like(counts, np.nan, dtype=float)
-                var_cal = np.full_like(counts, np.nan, dtype=float) if var is not None else None
+            if np.isfinite(S_b["i"]) and S_b["i"] > 0:
+                cal_mode = "I_ANCHOR"
+                S = float(S_b["i"])
+                flag = "OK"
 
-            elif args.mode == "gray" or nband < 2:
-                cal_mode = "GRAY"
-                S = float(np.nanmedian(Sb_vals[good_bands]))
-                disp = float(np.nanstd(Sb_vals[good_bands]) / np.nanmedian(Sb_vals[good_bands])) if nband >= 2 else 0.0
-                if disp > args.max_band_dispersion:
-                    flag = f"DISP>{args.max_band_dispersion:.2f}"
                 flam_cal = S * counts
-                var_cal = (S**2) * var if var is not None else None
+                var_cal = (
+                    (S**2) * var
+                    if var is not None
+                    else None
+                )
 
             else:
-                cal_mode = "TILT"
-                lam0 = 750.0
-                xs = []
-                ys = []
-                ws = []
-                for b, m, e in [("r", m_r, e_r), ("i", m_i, e_i), ("z", m_z, e_z)]:
-                    if not np.isfinite(S_b[b]):
-                        continue
-                    xs.append(np.log(LAMBDA_EFF_NM[b] / lam0))
-                    ys.append(np.log(S_b[b]))
-                    if np.isfinite(e) and e > 0:
-                        ws.append(1.0 / (0.4 * np.log(10.0) * e)**2)
-                    else:
-                        ws.append(1.0)
-                xs = np.array(xs)
-                ys = np.array(ys)
-                W = np.diag(ws)
-                A = np.vstack([np.ones_like(xs), xs]).T
-                beta = np.linalg.inv(A.T @ W @ A) @ (A.T @ W @ ys)
-                logS, alpha = beta[0], beta[1]
-                S = float(np.exp(logS))
-                alpha = float(alpha)
-                flam_cal = counts * S * (lam_nm / lam0) ** alpha
-                var_cal = var * (S**2) * (lam_nm / lam0) ** (2 * alpha) if var is not None else None
+                # Do not construct a physical flux scale from r and/or z
+                # when the accepted i-band anchor is unavailable.
+                flam_cal = np.full_like(
+                    counts, np.nan, dtype=float
+                )
+                var_cal = (
+                    np.full_like(var, np.nan, dtype=float)
+                    if var is not None
+                    else None
+                )
 
             if not source_valid:
                 # Preserve the slit and upstream spectroscopy/provenance,
@@ -490,16 +481,27 @@ def main():
                     )
 
             hdu_out.header["FLUXCAL"] = (cal_mode, "Step11 photometric flux calibration mode")
+            fcal_use = int(
+                source_valid
+                and cal_mode == "I_ANCHOR"
+                and np.isfinite(S)
+                and S > 0
+            )
             hdu_out.header["FCALUSE"] = (
-                int(source_valid),
-                "1 if slit is valid for source photometric calibration",
+                fcal_use,
+                "1 if physical Step11 flux calibration is usable",
+            )
+            hdu_out.header["FCALANCH"] = (
+                "i" if fcal_use else "NONE",
+                "Absolute photometric anchor band",
             )
             hdu_out.header["FLUXIN"] = (str(flux_col)[:68], "Input flux column used")
             if np.isfinite(S):
                 hdu_out.header["SCALE"] = (S, "Multiplicative scale (counts -> f_lambda)")
-            if np.isfinite(alpha):
-                hdu_out.header["ALPHA"] = (alpha, "Tilt exponent around 750 nm (if TILT)")
-            hdu_out.header["NBAND"] = (nband, "Number of bands used (r,i,z)")
+            hdu_out.header["NBAND"] = (
+                nband,
+                "Number of finite diagnostic bands (r,i,z)",
+            )
             _hdr_set_float(hdu_out.header, "DMR", dm.get("r", np.nan), "m_syn - m_cat (r)")
             _hdr_set_float(hdu_out.header, "DMI", dm.get("i", np.nan), "m_syn - m_cat (i)")
             _hdr_set_float(hdu_out.header, "DMZ", dm.get("z", np.nan), "m_syn - m_cat (z)")
@@ -511,6 +513,12 @@ def main():
                 "slit": slit,
                 "cal_mode": cal_mode,
                 "qcflag": flag,
+                "anchor_band": (
+                    "i" if cal_mode == "I_ANCHOR" else "NONE"
+                ),
+                "fcal_use": int(
+                    source_valid and cal_mode == "I_ANCHOR"
+                ),
                 "nband": nband,
                 "S": S,
                 "alpha": alpha,
@@ -529,7 +537,7 @@ def main():
     summary.to_csv(out_summary, index=False)
 
     try:
-        ok = summary["cal_mode"].isin(["GRAY", "TILT"])
+        ok = summary["cal_mode"].eq("I_ANCHOR")
         fig = plt.figure(figsize=(10, 6))
         ax1 = fig.add_subplot(2, 2, 1)
         ax1.hist(summary.loc[ok, "dm_r"].dropna(), bins=30)

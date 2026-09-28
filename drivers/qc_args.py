@@ -11,20 +11,14 @@ def format_qc_args(qc_path: Path, set_name: str | None, cfg_module, repo_root: P
     qc_str = str(qc_path)
 
     # Step09 closeout QC.
-    if qc_str.endswith("qc/step09/qc_step09_preferred_all_slits.py"):
-        root = cfg_module.ST09
-        return [
-            "--root", str(root),
-            "--out-pdf", str(Path(root) / "qc_step09_preferred_all_slits.pdf"),
-        ]
-
+    # The generic mosaic generator is also retained separately for exact
+    # reproduction of the historical paper figure.
     if qc_str.endswith("qc/step09/qc_step09_final_mosaic.py"):
         root = cfg_module.ST09
         return [
-            "--in", str(cfg_module.EXTRACT1D_OHCLEAN),
+            "--in", str(cfg_module.EXTRACT1D_OHREF),
             "--outdir", str(Path(root) / "qc_step09"),
-            "--column", "STELLAR",
-            "--show-pref",
+            "--column", "FLUX_APCORR",
         ]
 
     # Step10 closeout QC.

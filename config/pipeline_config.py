@@ -126,22 +126,25 @@ NAME_ARC_WAVELENGTH_TWEAKED = "arc_1d_wavelength_all_trial_tweak.fits"
 NAME_EXTRACT1D_EVEN = "extract1d_optimal_ridge_even.fits"
 NAME_EXTRACT1D_ODD = "extract1d_optimal_ridge_odd.fits"
 NAME_EXTRACT1D_ALL = "extract1d_optimal_ridge_all.fits"
-NAME_EXTRACT1D_WAV = "extract1d_optimal_ridge_all_varfix_wavfix.fits"
+NAME_EXTRACT1D_WAV = "extract1d_optimal_ridge_all_wav.fits"
+NAME_EXTRACT1D_ABSWAV = "extract1d_optimal_ridge_all_wav_abswav.fits"
 
-# Step09: ABAB/OH cleanup
+# Step09: OH ensemble wavelength registration
 NAME_OH_SHIFT_CSV = "oh_shifts.csv"
 NAME_OH_SHIFT_QC_CSV = "QC_OH_BG_registration.csv"
-NAME_EXTRACT1D_OHCLEAN = "extract1d_optimal_ridge_all_varfix_wavfix_OHref_skyclean099.fits"
-NAME_EXTRACT1D_OHREF = "extract1d_optimal_ridge_all_varfix_wavfix_OHref.fits"
+NAME_EXTRACT1D_OHREF = "extract1d_optimal_ridge_all_wav_abswav_OHref.fits"
+
+# Legacy Step09 products retained only for reproducibility of older reductions.
+NAME_EXTRACT1D_OHCLEAN = "extract1d_optimal_ridge_all_wav_ohclean.fits"
 NAME_EXTRACT1D_STEP09_ABAB = "extract1d_optimal_ridge_all_wav_step09_abab_preferred.fits"
 NAME_EXTRACT1D_STEP09_CONSENSUS = (
     "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus.fits"
 )
 
 # Step10: telluric correction
-NAME_TELLURIC_TEMPLATE = "telluric_O2_template_skyclean099_varfix.fits"
+NAME_TELLURIC_TEMPLATE = "telluric_O2_template.fits"
 NAME_EXTRACT1D_TELLCOR = (
-    "extract1d_skyclean099_tellcorr_validated.fits"
+    "extract1d_optimal_ridge_all_wav_abswav_OHref_tellcorr.fits"
 )
 
 # Step11: flux calibration
@@ -210,7 +213,7 @@ REDUCED_SUBDIRS = {
     "06": "06_science",
     "07": "07_wavecal",
     "08": "08_extract1d",
-    "09": "09_abab",
+    "09": "09_oh_refine",
     "10": "10_telluric",
     "11": "11_fluxcal",
     "12": "12_finalcal",
@@ -313,17 +316,23 @@ def build_directory_tree(profile: ModuleType) -> None:
         ST12_FINALCAL=reduced_step_dir(profile.REDUCED_DIR, "12"),
     )
 
-    # Backward-compatible stage aliases used by current scripts/notebooks.
+    # Canonical Step09 directory.
     profile.ST09_OH_REFINE = profile.ST09
-    profile.ST09_ABAB = profile.ST09
+
+    # Legacy ABAB directory retained only for reproducibility of old reductions.
+    profile.ST09_ABAB = profile.REDUCED_DIR / "09_abab"
 
 
 def build_reference_files(profile: ModuleType) -> None:
     """Attach calibration/reference products used by multiple steps."""
     _assign(
         profile,
-        RADEC_EVEN_CSV=REFERENCE_REGIONS_DIR / "radec_Even.csv",
-        RADEC_ODD_CSV=REFERENCE_REGIONS_DIR / "radec_Odd.csv",
+        RADEC_EVEN_CSV=REFERENCE_REGIONS_DIR / getattr(
+            profile, "RADEC_EVEN_NAME", "radec_Even.csv"
+        ),
+        RADEC_ODD_CSV=REFERENCE_REGIONS_DIR / getattr(
+            profile, "RADEC_ODD_NAME", "radec_Odd.csv"
+        ),
         EVEN_REG_FILE=REFERENCE_REGIONS_DIR / "Even_traces_mask_reg.fits",
         ODD_REG_FILE=REFERENCE_REGIONS_DIR / "Odd_traces_mask_reg.fits",
         FILTER_R=REFERENCE_FILTERS_DIR / NAME_FILTER_R,
@@ -337,6 +346,13 @@ def build_reference_files(profile: ModuleType) -> None:
         profile.MANUAL_WAVESHIFT_TABLE = REFERENCE_WAVECAL_DIR / profile.WAVESHIFT_TABLE
     else:
         profile.MANUAL_WAVESHIFT_TABLE = None
+
+    if hasattr(profile, "SCIENCE_WAVELENGTH_OFFSET_TABLE"):
+        profile.SCIENCE_WAVELENGTH_OFFSET_TABLE = (
+            REFERENCE_WAVECAL_DIR / profile.SCIENCE_WAVELENGTH_OFFSET_TABLE
+        )
+    else:
+        profile.SCIENCE_WAVELENGTH_OFFSET_TABLE = None
 
 
 def build_preprocessing_products(profile: ModuleType) -> None:
@@ -426,22 +442,25 @@ def build_extraction_products(profile: ModuleType) -> None:
         EXTRACT1D_ODD=profile.ST08_EXTRACT1D / NAME_EXTRACT1D_ODD,
         EXTRACT1D_ALL=profile.ST08_EXTRACT1D / NAME_EXTRACT1D_ALL,
         EXTRACT1D_WAV=profile.ST08_EXTRACT1D / NAME_EXTRACT1D_WAV,
+        EXTRACT1D_ABSWAV=profile.ST08_EXTRACT1D / NAME_EXTRACT1D_ABSWAV,
     )
 
 
 def build_oh_products(profile: ModuleType) -> None:
     _assign(
         profile,
-        EXTRACT1D_STEP09_ABAB=profile.ST09 / NAME_EXTRACT1D_STEP09_ABAB,
-        EXTRACT1D_STEP09_CONSENSUS=profile.ST09 / NAME_EXTRACT1D_STEP09_CONSENSUS,
+        # Legacy ABAB products retained only for reproducibility.
+        EXTRACT1D_STEP09_ABAB=profile.ST09_ABAB / NAME_EXTRACT1D_STEP09_ABAB,
+        EXTRACT1D_STEP09_CONSENSUS=profile.ST09_ABAB / NAME_EXTRACT1D_STEP09_CONSENSUS,
+
+        # Active Step09 products.
         OH_SHIFT_CSV=profile.ST09 / NAME_OH_SHIFT_CSV,
-        EXTRACT1D_OHREF=profile.ST08_EXTRACT1D / NAME_EXTRACT1D_OHREF,
+        EXTRACT1D_OHREF=profile.ST09 / NAME_EXTRACT1D_OHREF,
     )
 
-    # Frozen production Step09 product: fresh OH refinement + skyclean099.
-    profile.EXTRACT1D_OHCLEAN = (
-        profile.ST08_EXTRACT1D / NAME_EXTRACT1D_OHCLEAN
-    )
+    # Compatibility alias only.  The active pipeline performs no residual-sky
+    # cleanup after OH wavelength registration.
+    profile.EXTRACT1D_OHCLEAN = profile.EXTRACT1D_OHREF
 
 
 def build_telluric_products(profile: ModuleType) -> None:

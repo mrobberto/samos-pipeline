@@ -124,10 +124,21 @@ QUARTZ_SLITS_ON_ODD = "042.quartz_oriented_biascorr_cr_rowcorr.fits"
 # External astrometry/reference image
 SISI_IMAGE_NAME = "Coadd_i_median_078-082_ff_flipx_wcs_manual.fits"
 
+# Observation-time slit-coordinate tables used for Run8 / Dolidze25.
+# These preserve the actual slit positions, including slits repositioned
+# during the observing sequence.
+RADEC_EVEN_NAME = "run8_dolidze25_20260113_radec_Even.csv"
+RADEC_ODD_NAME = "run8_dolidze25_20260113_radec_Odd.csv"
+
 # Optional wavecal runtime knobs
 WAVECAL_YWIN0 = 0
 WAVECAL_FIRSTLEN = 4112
 
-#to fix the wavelengths, edit and use this table...
+# Optional Step07i manual arc/slit wavelength zero-point tweaks.
 WAVESHIFT_TABLE = "run8_dolidze25_manual_waveshifts.csv"
+
+# Authoritative Step08e science-spectrum absolute wavelength corrections.
+SCIENCE_WAVELENGTH_OFFSET_TABLE = (
+    "run8_dolidze25_science_wavelength_offsets.csv"
+)
 

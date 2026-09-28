@@ -30,8 +30,8 @@ class Stage:
 # The order here is the authoritative pipeline execution order.
 #
 # IMPORTANT:
-# - Step09 is a single ABAB OH-clean stage.
-# - The historical 09a/09b/09bm/09c subdivision is no longer operational.
+# - Step09 is the production ensemble-relative OH wavelength-registration stage.
+# - Historical residual-sky/ABAB cleanup machinery is not in the active science path.
 # - Step11c should point to the currently adopted production script.
 # -----------------------------------------------------------------------------
 SCRIPT_REGISTRY: tuple[Stage, ...] = (
@@ -63,7 +63,10 @@ SCRIPT_REGISTRY: tuple[Stage, ...] = (
           sets=("EVEN", "ODD"), args_template="--set {set}"),
     Stage("08b",  "pipeline/step08_extract1d/step08b_merge_even_odd.py",            "Merge EVEN and ODD extracted spectra"),
     Stage("08c",  "pipeline/step08_extract1d/step08c_attach_wavelength.py",         "Attach wavelength vectors to extracted spectra"),
-    Stage("09",   "pipeline/step09_oh_refine/step09_production_driver.py",          "Production OH refinement and residual-sky cleanup"),
+    Stage("08e",  "pipeline/step08_extract1d/step08e_apply_absolute_wavelength_offsets.py",
+          "Apply authoritative absolute science wavelength offsets"),
+    Stage("09",   "pipeline/step09_oh_refine/step09_production_driver.py",
+          "Ensemble-relative OH wavelength registration"),
     Stage("10a",  "pipeline/step10_telluric/step10a_build_telluric_template.py",    "Build empirical O2 telluric template"),
     Stage("10b",  "pipeline/step10_telluric/step10b_apply_telluric.py",             "Apply O2 telluric correction"),
     Stage("11a",  "pipeline/step11_fluxcal/step11a_extract_header_radec_resilient.py", "Extract RA/DEC and slit metadata"),
@@ -93,7 +96,7 @@ QC_REGISTRY: dict[str, tuple[str, ...]] = {
     "07h": ("qc/step07/qc07h_arc_wavelength_products.py",),
     "08a": ("qc/step08/qc_step08_extract.py",),
     "08c": ("qc/step08/qc_step08c_wavelength_alignment.py",),
-    "09":  ("qc/step09/qc_step09_preferred_all_slits.py", "qc/step09/qc_step09_final_mosaic.py"),
+    "09":  ("qc/step09/qc_step09_final_mosaic.py",),
     "10b": ("qc/step10/qc_step10_final_mosaic.py",),
     "11c": ("qc/step11/qc_step11_grid_patched_v2.py", "qc/step11/qc_step11_summary_b.py"),
 }
@@ -113,9 +116,12 @@ OUTPUT_CHECKS: dict[str, tuple[str, ...]] = {
     "08a2": ("EXTRACT1D_EVEN", "EXTRACT1D_ODD"),
     "08b": ("EXTRACT1D_ALL",),
     "08c": ("EXTRACT1D_WAV",),
-    "09":  ("EXTRACT1D_OHCLEAN",),
+    "08e": ("EXTRACT1D_ABSWAV",),
+    "09":  ("EXTRACT1D_OHREF",),
     "10a": ("TELLURIC_TEMPLATE",),
     "10b": ("EXTRACT1D_TELLCOR",),
+    "11a": ("STEP11_RADEC",),
+    "11b": ("STEP11_PHOTCAT",),
     "11c": ("EXTRACT1D_FLUXCAL", "FLUXCAL_SUMMARY_CSV"),
 #    "12a": ("ILLUM1D_PROFILE_EVEN", "ILLUM1D_PROFILE_ODD"),
 #    "12b": ("EXTRACT1D_ILLUMCORR",),

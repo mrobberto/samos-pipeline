@@ -114,8 +114,10 @@ def load_radec_table(path: Path):
 
 def build_radec_lookup_from_csv() -> dict[str, tuple[float, float]]:
     out = {}
-    for trace_set, fname in [("EVEN", "radec_Even.csv"), ("ODD", "radec_Odd.csv")]:
-        path = Path(config.REGIONS_DIR) / fname
+    for trace_set, path in [
+        ("EVEN", Path(config.RADEC_EVEN_CSV)),
+        ("ODD", Path(config.RADEC_ODD_CSV)),
+    ]:
         if not path.exists():
             continue
         rows = load_radec_table(path)
@@ -165,7 +167,7 @@ def parse_args():
     ap.add_argument(
         "--infile",
         type=Path,
-        default=Path(getattr(config, "EXTRACT1D_TELLCOR", Path(config.ST10_TELLURIC) / "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus_tellcorr.fits")),
+        default=Path(config.EXTRACT1D_TELLCOR),
         help="Input Step10 telluric-corrected MEF",
     )
         

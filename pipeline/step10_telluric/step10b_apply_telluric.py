@@ -9,9 +9,9 @@ Pipeline meaning
   Step10 = telluric
   
 PYTHONPATH=. python pipeline/step10_telluric/step10b_apply_telluric.py \
-  --infile ../_Run8_Science_2026_01/SAMI/Dolidze25/reduced/09_abab/extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus.fits \
+  --infile products/Run8_Dolidze25/reduced/09_oh_refine/extract1d_optimal_ridge_all_wav_abswav_OHref.fits \
   --template ../_Run8_Science_2026_01/SAMI/Dolidze25/reduced/10_telluric/telluric_O2_template.fits \
-  --outfile ../_Run8_Science_2026_01/SAMI/Dolidze25/reduced/10_telluric/extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus_tellcorr.fits  
+  --outfile products/Run8_Dolidze25/reduced/10_telluric/extract1d_optimal_ridge_all_wav_abswav_OHref_tellcorr.fits
 """
 
 from __future__ import annotations
@@ -72,21 +72,8 @@ DEFAULT_INFILE = Path(
         Path(config.ST09_OH_REFINE) / "extract1d_optimal_ridge_all_wav_ohclean.fits",
     )
 )
-DEFAULT_INFILE = Path(
-    getattr(
-        config,
-        "EXTRACT1D_STEP09_CONSENSUS",
-        Path(config.ST09_OH_REFINE)
-        / "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus.fits",
-    )
-)
-DEFAULT_OUTFILE = Path(
-    getattr(
-        config,
-        "EXTRACT1D_TELLCOR",
-        ST10 / "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus_tellcorr.fits",
-    )
-)
+DEFAULT_INFILE = Path(config.EXTRACT1D_OHREF)
+DEFAULT_OUTFILE = Path(config.EXTRACT1D_TELLCOR)
 
 DEFAULT_TEMPLATE = Path(
     getattr(

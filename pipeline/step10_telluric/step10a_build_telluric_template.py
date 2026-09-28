@@ -9,7 +9,7 @@ Pipeline meaning
   Step10 = telluric
   
 PYTHONPATH=. python pipeline/step10_telluric/step10a_build_telluric_template.py \
-  --infile ../_Run8_Science_2026_01/SAMI/Dolidze25/reduced/09_abab/extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus.fits \
+  --infile products/Run8_Dolidze25/reduced/09_oh_refine/extract1d_optimal_ridge_all_wav_abswav_OHref.fits \
   --outfile ../_Run8_Science_2026_01/SAMI/Dolidze25/reduced/10_telluric/telluric_O2_template.fits  
 """
 
@@ -46,14 +46,7 @@ def parse_args():
 ST10 = Path(config.ST10_TELLURIC)
 ST10.mkdir(parents=True, exist_ok=True)
 
-DEFAULT_INFILE = Path(
-    getattr(
-        config,
-        "EXTRACT1D_STEP09_CONSENSUS",
-        Path(config.ST09_OH_REFINE)
-        / "extract1d_optimal_ridge_all_wav_step09_abab_preferred_consensus.fits",
-    )
-)
+DEFAULT_INFILE = Path(config.EXTRACT1D_OHREF)
 DEFAULT_OUTFILE = Path(
     getattr(
         config,
@@ -232,10 +225,58 @@ def estimate_shift_corr(vec, ref, grid,
 def align_vectors(vecs_raw, grid, label,
                   max_shift_nm=1.0,
                   min_peak=0.15,
-                  use_gradient=True):
-    ref = robust_median_stack(np.array(vecs_raw[:5]))
+                  use_gradient=True,
+                  n_iter=3):
+    # Iteratively register all correlation-qualified normalized spectra.
+    # Seed from the robust median of all eligible candidates, not the first 5.
+    ref = robust_median_stack(np.asarray(vecs_raw, float))
+
+    for iteration in range(1, n_iter + 1):
+        aligned = []
+        shifts = []
+
+        for v in vecs_raw:
+            dlam, peak = estimate_shift_corr(
+                v, ref, grid,
+                max_shift_nm=max_shift_nm,
+                use_gradient=use_gradient,
+            )
+            if (not np.isfinite(peak)) or (peak < min_peak):
+                continue
+
+            v_shift = np.interp(
+                grid, grid + dlam, v,
+                left=np.nan, right=np.nan,
+            )
+            if np.isfinite(v_shift).sum() < 0.8 * v_shift.size:
+                continue
+
+            aligned.append(v_shift)
+            shifts.append(dlam)
+
+        if len(aligned) < 5:
+            raise SystemExit(
+                f"Too few aligned {label}-band slits after correlation "
+                f"gating at iteration {iteration}: {len(aligned)}"
+            )
+
+        new_ref = robust_median_stack(np.asarray(aligned, float))
+        delta = float(np.nanmedian(np.abs(new_ref - ref)))
+
+        print(
+            f"[{label} iter {iteration}] "
+            f"used={len(aligned)}/{len(vecs_raw)}  "
+            f"shift_nm median={float(np.nanmedian(shifts)):+.4f}  "
+            f"std={float(np.nanstd(shifts)):.4f}  "
+            f"template median |delta|={delta:.6g}"
+        )
+
+        ref = new_ref
+
+    # Final registration against the converged common template.
     aligned = []
     shifts = []
+
     for v in vecs_raw:
         dlam, peak = estimate_shift_corr(
             v, ref, grid,
@@ -244,16 +285,31 @@ def align_vectors(vecs_raw, grid, label,
         )
         if (not np.isfinite(peak)) or (peak < min_peak):
             continue
-        v_shift = np.interp(grid, grid + dlam, v, left=np.nan, right=np.nan)
+
+        v_shift = np.interp(
+            grid, grid + dlam, v,
+            left=np.nan, right=np.nan,
+        )
         if np.isfinite(v_shift).sum() < 0.8 * v_shift.size:
             continue
+
         aligned.append(v_shift)
         shifts.append(dlam)
-    if len(aligned) < 5:
-        raise SystemExit(f"Too few aligned {label}-band slits after correlation gating: {len(aligned)}")
-    print(f"[{label}-band xcorr] used={len(aligned)}/{len(vecs_raw)}  shift_nm median={float(np.nanmedian(shifts)):+.4f}  std={float(np.nanstd(shifts)):.4f}")
-    return aligned, shifts
 
+    if len(aligned) < 5:
+        raise SystemExit(
+            f"Too few final aligned {label}-band slits after correlation "
+            f"gating: {len(aligned)}"
+        )
+
+    print(
+        f"[{label} FINAL] "
+        f"used={len(aligned)}/{len(vecs_raw)}  "
+        f"shift_nm median={float(np.nanmedian(shifts)):+.4f}  "
+        f"std={float(np.nanstd(shifts)):.4f}"
+    )
+
+    return aligned, shifts
 
 def main():
     args = parse_args()
@@ -332,15 +388,9 @@ def main():
         use_gradient=False,
     )
     
-    # Keep strongest A-band absorbers
-    vecsA = sorted(vecsA, key=lambda v: np.nanmin(v))   # deepest first
-    N_KEEP_A = max(10, int(0.5 * len(vecsA)))
-    vecsA = vecsA[:N_KEEP_A]
-    
-    # Keep strongest B-band absorbers
-    vecsB = sorted(vecsB, key=lambda v: np.nanmin(v))   # deepest first
-    N_KEEP_B = max(10, int(0.5 * len(vecsB)))
-    vecsB = vecsB[:N_KEEP_B]
+    # Use all correlation-qualified aligned spectra.
+    # Do not rank/select by normalized telluric depth: depth = 1-min(T)
+    # is noise-biased, especially in the B band.
     
     arrA = np.asarray(vecsA, float)
     arrB = np.asarray(vecsB, float)
@@ -351,9 +401,8 @@ def main():
     stackA = np.clip(stackA, 0.02, 1.0)
     stackB = np.clip(stackB, 0.02, 1.0)
     
-    from scipy.ndimage import median_filter
-    stackA = median_filter(stackA, size=3)
-    stackB = median_filter(stackB, size=3)
+    # Retain the robust, iteratively registered ensemble median
+    # at its native spectral sampling; no post-stack smoothing.
     
     tauA = to_optical_depth(stackA)
     tauB = to_optical_depth(stackB)

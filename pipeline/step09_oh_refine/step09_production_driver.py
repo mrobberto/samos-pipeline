@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+"""
+Production Step09: ensemble-relative OH wavelength registration.
+
+This driver runs only the validated wavelength-registration sequence:
+
+  09a  measure ensemble-relative OH shifts
+  09b  apply accepted shifts to the wavelength arrays
+
+No residual-sky subtraction or spectral-flux modification is performed in
+Step09.  The input is the Step08e product after application of the
+authoritative absolute science-spectrum wavelength offsets.
+"""
 
 import argparse
 from pathlib import Path
@@ -10,17 +22,17 @@ import config
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Production Step09: OH registration + residual-sky cleanup"
+        description="Production Step09: ensemble-relative OH wavelength registration"
     )
     ap.add_argument(
         "--in-fits",
-        default=str(config.EXTRACT1D_WAV),
-        help="Input Step08 wavelength-attached extraction",
+        default=str(config.EXTRACT1D_ABSWAV),
+        help="Input Step08e absolute-wavelength-corrected extraction",
     )
     ap.add_argument(
         "--outdir",
         default=str(config.ST09),
-        help="Accepted for master-driver compatibility; canonical output paths come from config",
+        help="Accepted for master-driver compatibility; canonical outputs come from config",
     )
     args = ap.parse_args()
 
@@ -29,7 +41,6 @@ def main():
     inp = Path(args.in_fits)
     csv = Path(config.OH_SHIFT_CSV)
     ohref = Path(config.EXTRACT1D_OHREF)
-    final = Path(config.EXTRACT1D_OHCLEAN)
 
     cmds = [
         [
@@ -44,12 +55,7 @@ def main():
             "--in", str(inp),
             "--csv", str(csv),
             "--out", str(ohref),
-        ],
-        [
-            sys.executable,
-            str(root / "pipeline/step09_oh_refine/step09_sky_template_cleanup.py"),
-            "--infile", str(ohref),
-            "--outfile", str(final),
+            "--clip", "1.0",
         ],
     ]
 
@@ -57,7 +63,7 @@ def main():
         print("[CMD]", " ".join(map(str, cmd)))
         subprocess.run(cmd, cwd=root, check=True)
 
-    print("Step09 production product:", final)
+    print("Step09 OH-refined product:", ohref)
 
 
 if __name__ == "__main__":

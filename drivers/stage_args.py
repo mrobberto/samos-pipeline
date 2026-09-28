@@ -32,20 +32,43 @@ def _pick_first_existing(*vals):
 # -----------------------------------------------------------------------------
 def format_stage_args(stage: Stage, set_name: str | None, args: argparse.Namespace, cfg_module) -> list[str]:
 
+    if stage.key == "08c":
+        # Science extraction uses the baseline Step07h wavelength MEF.
+        # Optional Step07i manual/tweaked wavelength products must never be
+        # selected implicitly merely because a trial-tweak file exists.
+        return [
+            "--in", str(cfg_module.EXTRACT1D_ALL),
+            "--out", str(cfg_module.EXTRACT1D_WAV),
+            "--wave-mef", str(cfg_module.ARC_WAVELENGTH_BASE),
+        ]
+
+    if stage.key == "08e":
+        return [
+            "--infile", str(cfg_module.EXTRACT1D_WAV),
+            "--table", str(cfg_module.SCIENCE_WAVELENGTH_OFFSET_TABLE),
+            "--outfile", str(cfg_module.EXTRACT1D_ABSWAV),
+        ]
+
     if stage.key == "09":
-        # Step09 is now a single ABAB OH-clean stage.
-        # It consumes the Step08 wavelength-attached extraction and writes into
-        # the canonical Step09 ABAB directory defined by the active config.
-        infile = str(cfg_module.EXTRACT1D_WAV)
-        outdir = str(cfg_module.ST09)
-    
-        vals: list[str] = []
-        if infile:
-            vals.extend(["--in-fits", infile])
-        if outdir:
-            vals.extend(["--outdir", outdir])
-        return vals
-    
+        # Step09 performs wavelength registration only.
+        return [
+            "--in-fits", str(cfg_module.EXTRACT1D_ABSWAV),
+            "--outdir", str(cfg_module.ST09),
+        ]
+
+    if stage.key == "10a":
+        return [
+            "--infile", str(cfg_module.EXTRACT1D_OHREF),
+            "--outfile", str(cfg_module.TELLURIC_TEMPLATE),
+        ]
+
+    if stage.key == "10b":
+        return [
+            "--infile", str(cfg_module.EXTRACT1D_OHREF),
+            "--template", str(cfg_module.TELLURIC_TEMPLATE),
+            "--outfile", str(cfg_module.EXTRACT1D_TELLCOR),
+        ]
+
     if stage.key == "11a":
         vals: list[str] = []
         infile = (
@@ -78,6 +101,12 @@ def format_stage_args(stage: Stage, set_name: str | None, args: argparse.Namespa
             vals.extend(["--odd-geom", str(odd_geom)])
         return vals
 
+    if stage.key == "11b":
+        return [
+            "--in", str(cfg_module.STEP11_RADEC),
+            "--out", str(cfg_module.STEP11_PHOTCAT),
+        ]
+
     if stage.key == "11c":
         # Keep override support, but default to config-driven discovery if available.
         extract = (
@@ -105,6 +134,23 @@ def format_stage_args(stage: Stage, set_name: str | None, args: argparse.Namespa
             vals.append(phot)
         return vals
     
+    if stage.key == "12d":
+        return [
+            "--shape-spectra", str(cfg_module.EXTRACT1D_TELLCOR),
+            "--phot-csv", str(cfg_module.STEP11_PHOTCAT),
+            "--spectra", str(cfg_module.EXTRACT1D_FLUXCAL),
+            "--out-fits", str(cfg_module.STEP12D_MASTER_FITS),
+            "--summary-csv", str(cfg_module.STEP12D_SUMMARY_CSV),
+            "--metadata-json", str(cfg_module.STEP12D_METADATA_JSON),
+        ]
+
+    if stage.key == "12e":
+        return [
+            "--in", str(cfg_module.EXTRACT1D_FLUXCAL),
+            "--master", str(cfg_module.STEP12D_MASTER_FITS),
+            "--out", str(cfg_module.EXTRACT1D_FINALCAL),
+        ]
+
     if stage.key == "12c":
         return [
             "--id-col", "slit",
