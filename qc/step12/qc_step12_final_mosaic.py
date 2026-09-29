@@ -50,6 +50,25 @@ def parse_args():
     p.add_argument("--xhi", type=float, default=960.0)
     p.add_argument("--ncol", type=int, default=8)
     p.add_argument("--photcat", default=None, help="Optional SkyMapper photometry CSV")
+    p.add_argument(
+        "--yscale",
+        choices=["global", "perpanel"],
+        default="perpanel",
+        help="Common or independent vertical scale",
+    )
+    p.add_argument(
+        "--ymode",
+        choices=["linear", "log"],
+        default="linear",
+        help="Linear or logarithmic vertical axis",
+    )
+    p.add_argument("--ylo", type=float, default=None)
+    p.add_argument("--yhi", type=float, default=None)
+    p.add_argument(
+        "--title",
+        default="Final calibrated spectra",
+        help="Overall title; use empty string for no title",
+    )
     return p.parse_args()
 
 
@@ -166,12 +185,89 @@ def main():
     ncol = int(args.ncol)
     nrow = math.ceil(n / ncol)
 
+    global_ylim = None
+
+    if args.yscale == "global":
+        yvals = []
+
+        for r in rows:
+            lam = np.asarray(r["lam"], float)
+            flux = np.asarray(r["flux"], float)
+
+            good = (
+                np.isfinite(lam)
+                & np.isfinite(flux)
+                & (lam >= args.xlo)
+                & (lam <= args.xhi)
+            )
+
+            if args.ymode == "log":
+                good &= flux > 0
+
+            if np.any(good):
+                yvals.append(flux[good])
+
+            # Include SkyMapper anchors in the common scale.
+            if phot is not None:
+                prow = phot.loc[phot["slit"] == r["slit"]]
+
+                if len(prow) == 1:
+                    prow = prow.iloc[0]
+
+                    for band, lam_eff in {
+                        "r": PIVOT_R_NM,
+                        "i": PIVOT_I_NM,
+                        "z": PIVOT_Z_NM,
+                    }.items():
+                        mag_col = f"{band}_mag"
+
+                        if (
+                            args.xlo <= lam_eff <= args.xhi
+                            and mag_col in prow.index
+                            and np.isfinite(prow[mag_col])
+                        ):
+                            fphot = abmag_to_flam_cgs(
+                                float(prow[mag_col]),
+                                lam_eff,
+                            )
+
+                            if np.isfinite(fphot):
+                                yvals.append(np.asarray([fphot]))
+
+        if yvals:
+            yy = np.concatenate(yvals)
+            yy = yy[np.isfinite(yy)]
+
+            if args.ymode == "log":
+                yy = yy[yy > 0]
+
+                lo = (
+                    args.ylo
+                    if args.ylo is not None
+                    else np.nanpercentile(yy, 1.0)
+                )
+                hi = (
+                    args.yhi
+                    if args.yhi is not None
+                    else np.nanpercentile(yy, 99.5)
+                )
+
+            else:
+                lo, hi = np.nanpercentile(yy, [1.0, 99.0])
+
+                if args.ylo is not None:
+                    lo = args.ylo
+                if args.yhi is not None:
+                    hi = args.yhi
+
+            global_ylim = (float(lo), float(hi))
+
     fig, axes = plt.subplots(
         nrow,
         ncol,
         figsize=(4 * ncol, 2.5 * nrow),
         sharex=True,
-        sharey=False,
+        sharey=(args.yscale == "global"),
     )
 
     axes = np.ravel(axes)
@@ -236,7 +332,40 @@ def main():
         ax.axvspan(BAND_A[0], BAND_A[1], color="red", alpha=0.08)
 
         ax.set_xlim(args.xlo, args.xhi)
-        ax.set_ylim(*safe_ylim(flux))
+
+        if args.ymode == "log":
+            ax.set_yscale("log")
+
+        if global_ylim is not None:
+            ax.set_ylim(*global_ylim)
+
+        elif args.ymode == "log":
+            vals = np.asarray(flux, float)
+            vals = vals[np.isfinite(vals) & (vals > 0)]
+
+            if vals.size:
+                lo = (
+                    args.ylo
+                    if args.ylo is not None
+                    else np.nanpercentile(vals, 1.0)
+                )
+                hi = (
+                    args.yhi
+                    if args.yhi is not None
+                    else np.nanpercentile(vals, 99.5)
+                )
+                ax.set_ylim(lo, hi)
+
+        else:
+            lo, hi = safe_ylim(flux)
+
+            if args.ylo is not None:
+                lo = args.ylo
+            if args.yhi is not None:
+                hi = args.yhi
+
+            ax.set_ylim(lo, hi)
+
         unit_tag = "final f_lambda" if mode == "FLUX_FLAM_STELLARRESP" else mode
         ax.set_title(f"{r['slit']}  {unit_tag}", fontsize=8)
         ax.grid(True, alpha=0.20)
@@ -247,11 +376,11 @@ def main():
     out_png = outdir / "QC_step12_final_spectra_subplots.png"
     out_pdf = outdir / "QC_step12_final_spectra_subplots.pdf"
 
-    plt.tight_layout(rect=[0, 0, 1, 0.97])
-    fig.suptitle(
-        f"Step12 final spectra ({args.column}): black = stored spectrum; gold points = SkyMapper",
-        fontsize=16,
-    )
+    if args.title.strip():
+        plt.tight_layout(rect=[0, 0, 1, 0.965])
+        fig.suptitle(args.title, fontsize=16)
+    else:
+        plt.tight_layout()
     fig.savefig(out_png, dpi=150)
     fig.savefig(out_pdf)
     plt.close(fig)

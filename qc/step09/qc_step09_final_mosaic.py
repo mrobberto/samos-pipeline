@@ -20,7 +20,7 @@ PYTHONPATH=. python qc/step09/qc_step09_final_mosaic.py \
   --yscale global \
   --ymode log \
   --ylo 0.001 \
-  --title "Spectra after background subtraction"
+  --title "Spectra after OH subtraction"
 
 PYTHONPATH=. python qc/step09/qc_step09_final_mosaic.py \
   --in products/Run8_Dolidze25/reduced/10_telluric/extract1d_skyclean099_tellcorr_validated.fits \
@@ -32,7 +32,7 @@ PYTHONPATH=. python qc/step09/qc_step09_final_mosaic.py \
   --yscale global \
   --ymode log \
   --ylo 0.001 \
-  --title "Spectra after validated telluric correction"
+  --title "Spectra after telluric correction"
 """
 
 import os
@@ -202,8 +202,8 @@ def main():
     parser.add_argument("--yhi", type=float, default=None, help="Optional upper y-limit")
     parser.add_argument(
         "--title",
-        default="Spectra after background subtraction",
-        help="Figure title",
+        default=None,
+        help="Figure title; default is inferred from --column",
     )
     parser.add_argument(
         "--outfile-root",
@@ -211,6 +211,18 @@ def main():
         help="Root name for output files (default derived from column name)",
     )
     args = parser.parse_args()
+
+    # Infer a scientifically meaningful title from the reduction product.
+    # An explicit --title always overrides this logic.
+    if args.title is None:
+        col = args.column.upper()
+
+        if "TELLCOR" in col:
+            args.title = "Spectra after telluric correction"
+        elif col in {"STELLAR_CONSENSUS", "FLUX_APCORR"} or "STELLAR" in col:
+            args.title = "Spectra after OH subtraction"
+        else:
+            args.title = f"Spectra: {args.column}"
 
     os.makedirs(args.outdir, exist_ok=True)
 

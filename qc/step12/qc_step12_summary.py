@@ -998,7 +998,12 @@ def main():
                 lam_map = {"r": lam_r, "i": lam_i, "z": lam_z}
 
                 axC.set_xlabel("Wavelength (nm)")
-                axC.set_ylabel(ylab)
+                if ylab in {"FLUX_FLAM", "FLUX_FLAM_STELLARRESP"}:
+                    axC.set_ylabel(
+                        r"$f_\lambda$ [erg s$^{-1}$ cm$^{-2}$ $\AA^{-1}$]"
+                    )
+                else:
+                    axC.set_ylabel(ylab)
                 axC.grid(True, alpha=0.2)
                 axC.set_xlim(args.xmin, args.xmax)
 
@@ -1011,37 +1016,6 @@ def main():
                     axC.axvline(trust_lo, color="0.5", ls=":", lw=1)
                 if np.isfinite(trust_hi):
                     axC.axvline(trust_hi, color="0.5", ls=":", lw=1)
-
-                # --- Step12e status box ---
-                global_i = float(hdr_spec.get("S12GIN", np.nan))
-                edge_policy = str(hdr_spec.get("S12EDGE", "?")).strip()
-                photnorm = hdr_spec.get("PHOTNORM", False)
-
-                trusted_txt = (
-                    f"{trust_lo:.1f}--{trust_hi:.1f} nm"
-                    if np.isfinite(trust_lo) and np.isfinite(trust_hi)
-                    else "?"
-                )
-                global_txt = f"{global_i:.8f}" if np.isfinite(global_i) else "?"
-
-                status = (
-                    f"display = {ylab}\n"
-                    f"global C_i = {global_txt}\n"
-                    f"trusted = {trusted_txt}\n"
-                    f"edge = {edge_policy}\n"
-                    f"per-object photnorm = {bool(photnorm)}"
-                )
-                
-                axC.text(
-                    0.01, 0.98,
-                    status,
-                    transform=axC.transAxes,
-                    va="top",
-                    ha="left",
-                    fontsize=8,
-                    family="monospace",
-                    bbox=dict(boxstyle="round,pad=0.25", alpha=0.15),
-                )
 
                 if ylab in ["FLUX_FLAM", "FLUX_FLAM_STELLARRESP"]:
                     axC.legend(loc="best", fontsize=9)
@@ -1109,7 +1083,7 @@ def main():
                             axC.axhline(ymin, color="0.7", ls=":", lw=0.8)
 
 
-                fig.suptitle(f"{slit}  (Step12 final summary)", fontsize=12)
+                fig.suptitle(f"{slit}  — Final reduction summary", fontsize=12)
                 pdf.savefig(fig)
                 plt.close(fig)
                 n_written += 1
