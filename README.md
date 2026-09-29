@@ -102,8 +102,8 @@ final diagnostic summaries
 notebook displays
 driver-integrated QC runs
 
-Only the current QC layer remains in the active step folders. Older or
-superseded QC scripts have been moved into qc/archive/.
+Only the current QC layer is distributed in the public repository.
+Older or superseded QC scripts are excluded from the public release.
 
 Current stage model
 
@@ -167,12 +167,12 @@ drivers/run_pipeline.py
 Inspection and validation live in:
 qc/
 notebooks
-Archived material lives in:
+Archived development material retained in the repository lives in:
 pipeline/archive/
-qc/archive/
 
-Archived files are retained for provenance and recovery, but they are not
-the operational path.
+These files are retained for provenance and recovery, but they are not part
+of the operational pipeline. Superseded QC and driver scripts are excluded
+from the public release.
 
 Maintenance notes
 
@@ -205,13 +205,15 @@ archived historical material preserved separately
 ```markdown
 # Archive Policy
 
-This repository retains older scripts, prototypes, alternative implementations,
-and superseded QC tools inside archive folders for provenance.
+This repository retains selected older pipeline scripts, prototypes, and
+alternative implementations for provenance.
 
-Archive locations currently include:
+The retained archive location is:
 
 - `pipeline/archive/`
-- `qc/archive/`
+
+Superseded QC and obsolete driver scripts are not distributed with the
+public release.
 
 ## Purpose of archived material
 
