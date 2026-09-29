@@ -143,8 +143,20 @@ NAME_EXTRACT1D_STEP09_CONSENSUS = (
 
 # Step10: telluric correction
 NAME_TELLURIC_TEMPLATE = "telluric_O2_template.fits"
+
 NAME_EXTRACT1D_TELLCOR = (
     "extract1d_optimal_ridge_all_wav_abswav_OHref_tellcorr.fits"
+)
+
+# Step10c: geometry-aware relative illumination correction
+NAME_EXTRACT1D_TELLCOR_ILLUMREL = (
+    NAME_EXTRACT1D_TELLCOR.replace(".fits", "_illumrel.fits")
+)
+NAME_ILLUMREL_REFERENCE_CSV = "illumrel_reference.csv"
+
+# Step12d: validated 24-star r>600/i/z quadratic response
+NAME_STEP12_RESPONSE_CSV = (
+    "validated_rtrunc_response_24_illumrel.csv"
 )
 
 # Step11: flux calibration
@@ -474,7 +486,23 @@ def build_telluric_products(profile: ModuleType) -> None:
 def build_fluxcal_products(profile: ModuleType) -> None:
     _assign(
         profile,
-        STEP11_INPUT_SPECTRA=profile.EXTRACT1D_TELLCOR,
+        EXTRACT1D_TELLCOR_ILLUMREL=(
+            profile.ST10_TELLURIC
+            / NAME_EXTRACT1D_TELLCOR_ILLUMREL
+        ),
+        ILLUMREL_REFERENCE_CSV=(
+            profile.ST10_TELLURIC
+            / NAME_ILLUMREL_REFERENCE_CSV
+        ),
+        STEP11_INPUT_SPECTRA=(
+            profile.ST10_TELLURIC
+            / NAME_EXTRACT1D_TELLCOR_ILLUMREL
+        ),
+        STEP12_RESPONSE_CSV=(
+            REFERENCE_TABLES_DIR
+            / "spectrophotometry"
+            / NAME_STEP12_RESPONSE_CSV
+        ),
         STEP11_RADEC=profile.ST11_FLUXCAL / NAME_STEP11_RADEC,
         STEP11_PHOTCAT=profile.ST11_FLUXCAL / NAME_STEP11_PHOTCAT,
         EXTRACT1D_FLUXCAL=profile.ST11_FLUXCAL / NAME_EXTRACT1D_FLUXCAL,

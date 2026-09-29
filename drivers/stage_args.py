@@ -69,12 +69,19 @@ def format_stage_args(stage: Stage, set_name: str | None, args: argparse.Namespa
             "--outfile", str(cfg_module.EXTRACT1D_TELLCOR),
         ]
 
+    if stage.key == "10c":
+        return [
+            "--infile", str(cfg_module.EXTRACT1D_TELLCOR),
+            "--outfile", str(cfg_module.EXTRACT1D_TELLCOR_ILLUMREL),
+            "--reference-csv", str(cfg_module.ILLUMREL_REFERENCE_CSV),
+        ]
+
     if stage.key == "11a":
         vals: list[str] = []
         infile = (
             args.step11a_infile
-            or str(cfg_module.EXTRACT1D_TELLCOR)
             or str(cfg_module.STEP11_INPUT_SPECTRA)
+            or str(cfg_module.EXTRACT1D_TELLCOR)
         )
         outcsv = (
             args.step11a_outcsv
@@ -134,21 +141,23 @@ def format_stage_args(stage: Stage, set_name: str | None, args: argparse.Namespa
             vals.append(phot)
         return vals
     
-    if stage.key == "12d":
-        return [
-            "--shape-spectra", str(cfg_module.EXTRACT1D_TELLCOR),
-            "--phot-csv", str(cfg_module.STEP11_PHOTCAT),
-            "--spectra", str(cfg_module.EXTRACT1D_FLUXCAL),
-            "--out-fits", str(cfg_module.STEP12D_MASTER_FITS),
-            "--summary-csv", str(cfg_module.STEP12D_SUMMARY_CSV),
-            "--metadata-json", str(cfg_module.STEP12D_METADATA_JSON),
-        ]
-
     if stage.key == "12e":
         return [
             "--in", str(cfg_module.EXTRACT1D_FLUXCAL),
             "--master", str(cfg_module.STEP12D_MASTER_FITS),
             "--out", str(cfg_module.EXTRACT1D_FINALCAL),
+        ]
+
+    if stage.key == "12d":
+        return [
+            "--response-csv", str(cfg_module.STEP12_RESPONSE_CSV),
+            "--spectra", str(cfg_module.EXTRACT1D_STEP12_INPUT),
+            "--out-fits", str(cfg_module.STEP12D_MASTER_FITS),
+            "--summary-csv", str(cfg_module.STEP12D_SUMMARY_CSV),
+            "--metadata-json", str(cfg_module.STEP12D_METADATA_JSON),
+            "--trust-min", "600.0",
+            "--trust-max", "1000.0",
+            "--min-i-coverage", "0.90",
         ]
 
     if stage.key == "12c":
