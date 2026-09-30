@@ -228,13 +228,13 @@ def main():
                 except Exception:
                     ra = dec = None
 
-            if src is None and slit in csv_lookup:
-                ra, dec = csv_lookup[slit]
-                src = "CSV"
-            
             if src is None and slit in geom_lookup:
                 ra, dec, gxref, gxlo, gxhi, gymin = geom_lookup[slit]
                 src = "GEOMETRY"
+
+            if src is None and slit in csv_lookup:
+                ra, dec = csv_lookup[slit]
+                src = "CSV"
                 
 
             if src is None:

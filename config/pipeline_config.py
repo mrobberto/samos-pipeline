@@ -166,6 +166,8 @@ NAME_STEP11_SUMMARY_CSV = "Step11_fluxcal_summary.csv"
 NAME_STEP11_QA_PNG = "Step11_fluxcal_QA.png"
 NAME_EXTRACT1D_FLUXCAL = "extract1d_fluxcal.fits"
 NAME_STEP11_CONTINUUM_SNR_CSV = "Extract1d_fluxcal_continuum_snr.csv"
+NAME_STEP11_ENSEMBLE_RESPONSE_CSV = "ensemble_response.csv"
+NAME_STEP11_ENSEMBLE_RESPONSE_LOO_CSV = "ensemble_response_loo.csv"
 NAME_ABSCAL_SUMMARY_CSV = "extract1d_optimal_ridge_all_wav_abscal_summary.csv"
 NAME_MASTER_RESPONSE_FITS = "extract1d_optimal_ridge_all_wav_master_response.fits"
 NAME_QC_STEP11_GRID_PDF = "qc_step11_fluxcal_grid.pdf"
@@ -511,6 +513,12 @@ def build_fluxcal_products(profile: ModuleType) -> None:
         STEP11_SUMMARY_CSV=profile.ST11_FLUXCAL / NAME_STEP11_SUMMARY_CSV,
         STEP11_QA_PNG=profile.ST11_FLUXCAL / NAME_STEP11_QA_PNG,
         STEP11_CONTINUUM_SNR_CSV=profile.ST11_FLUXCAL / NAME_STEP11_CONTINUUM_SNR_CSV,
+        STEP11_ENSEMBLE_RESPONSE_CSV=(
+            profile.ST11_FLUXCAL / NAME_STEP11_ENSEMBLE_RESPONSE_CSV
+        ),
+        STEP11_ENSEMBLE_RESPONSE_LOO_CSV=(
+            profile.ST11_FLUXCAL / NAME_STEP11_ENSEMBLE_RESPONSE_LOO_CSV
+        ),
     )
 
 

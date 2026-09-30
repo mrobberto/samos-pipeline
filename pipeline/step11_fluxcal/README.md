@@ -1,177 +1,108 @@
-# Step 11 — Flux Calibration
+# Step 11 — Flux Calibration and Ensemble Response
 
-This step performs the **absolute flux calibration** of the extracted 1D spectra and a subsequent **empirical refinement** using external photometry (SkyMapper).
+Step 11 prepares the spectrophotometric calibration used by the final Step 12 calibration.
 
----
+## Production flow
 
-## Overview
+Step10 telluric + relative-illumination spectra feed two parallel products:
 
-### Step11a — Slit → Sky coordinates extraction
+- Step11c: absolute flux calibration
+- Step11d: ensemble broadband response shape
 
-Script:
+These are combined by Step12d to build the production master response, which
+Step12e applies to the final spectra.
+
+## Step11a — Slit sky coordinates
+
 `step11a_extract_header_radec_resilient.py`
 
-* Extracts RA/DEC for each slit from the science products
-* Produces:
+Coordinate priority:
 
-  * `slit_trace_radec_all.csv`
+1. coordinates already present in the extracted-spectrum header
+2. Step04 slit geometry
+3. legacy CSV fallback
 
----
+Output: `slit_trace_radec_all.csv`
 
-### Step11b — Photometric crossmatch (SkyMapper)
+## Step11b — SkyMapper crossmatch
 
-Script:
 `step11b_query_skymapper.py`
 
-* Queries SkyMapper for matched sources
-* Produces:
+Matches slit coordinates to SkyMapper r/i/z photometry.
 
-  * `slit_trace_radec_skymapper_all.csv`
+Output: `slit_trace_radec_skymapper_all.csv`
 
----
+## Step11c — Absolute flux calibration
 
-### Step11c — First-pass absolute flux calibration
-
-Script:
 `step11c_fluxcal.py`
 
-* Converts extracted spectra into **physical flux-density units**
-* Anchors spectra to SkyMapper photometry (r/i/z bands)
+Default spectral input: `config.STEP11_INPUT_SPECTRA`
 
-Output:
+Default photometric catalog: `config.STEP11_PHOTCAT`
 
-* `Extract1D_fluxcal.fits`
+Primary output: `config.EXTRACT1D_FLUXCAL`
 
-Key columns:
+Currently: `extract1d_fluxcal.fits`
 
-* `FLUX_FLAM` — flux (erg s⁻¹ cm⁻² Å⁻¹)
-* `VAR_FLAM2` — propagated variance
+Step11c establishes the absolute flux-density scale.
 
-This step establishes the **absolute photometric scale**.
+## Step11d — Ensemble broadband response
 
----
+`step11d_ensemble_response.py`
 
-### Step11d — Empirical refinement
+Derives one common smooth multiplicative response shape from the ensemble of
+usable calibration stars. It does not modify the spectra.
 
-Script:
-`step11d_refine_fluxcal.py`
+Default spectral input: `config.STEP11_INPUT_SPECTRA`
 
-Applies a smooth multiplicative correction:
+Default photometric catalog: `config.STEP11_PHOTCAT`
 
-[
-F_{\lambda,\mathrm{refined}} = R_{\mathrm{11d}}(\lambda),F_{\lambda,\mathrm{11c}}
-]
+The response is parameterized as
 
-#### Method
+    ln C(lambda) = a1 x + a2 x^2
+    x = (lambda - lambda_i,pivot) / scale_nm
 
-* A **quadratic response function** is fit per slit using synthetic photometry
-* Two bandpass modes are supported:
+and is normalized to unity at the SkyMapper i-band pivot.
 
-**full**
+Gray, linear, and quadratic models are evaluated. The production quadratic
+solution is validated with leave-one-star-out cross-validation.
 
-* Uses standard r/i/z bandpasses
+Canonical outputs:
 
-**edge_matched**
+- `config.STEP11_ENSEMBLE_RESPONSE_CSV`
+- `config.STEP11_ENSEMBLE_RESPONSE_LOO_CSV`
 
-* Uses truncated bandpasses to reduce edge biases:
+Currently:
 
-  * r_short: **λ ≥ 600 nm**
-  * i: unchanged
-  * z_short: **λ ≤ 930 nm**
+- `ensemble_response.csv`
+- `ensemble_response_loo.csv`
 
-* Synthetic magnitudes for `r_short` and `z_short` are derived from the full r/i/z photometry
+## Step 12 handoff
 
-#### Outputs
+`step12d_build_stellar_response.py` combines the Step11d response shape with a
+single global i-band normalization derived from the Step11c calibrated spectra.
 
-* `Extract1D_fluxcal_refined_perstar.fits`
-* `Extract1D_fluxcal_step11d_summary.csv`
-* `Extract1D_fluxcal_step11d_debug.csv`
-* `Extract1D_fluxcal_step11d_metadata.json`
+The production trusted wavelength interval is 600–1000 nm.
 
-Key columns:
+`step12e_apply_stellar_response.py` applies the resulting master response to
+all spectra. Outside the trusted interval, the nearest boundary response is
+held fixed; the quadratic response is not extrapolated.
 
-* `RESP_STEP11D` — multiplicative response
-* `FLUX_FLAM_REFINED` — refined spectrum
+No per-object photometric normalization is applied in production Step12.
 
----
+## Diagnostic tools
 
-## Philosophy
-
-* **Step11c** sets the absolute scale
-* **Step11d** applies a smooth broadband correction
-
-The refinement:
-
-* is driven by **integrated band fluxes**
-* corrects large-scale response mismatches (e.g. grating edges)
-* preserves spectral features
-* remains close to unity unless required by photometry
-
----
-
-## Expected behavior
-
-* `FLUX_FLAM` and `FLUX_FLAM_REFINED` are similar in scale
-* `RESP_STEP11D` is smooth and positive
-* Typical response variation:
-
-  * ~0.5–3 across wavelength range
-* Refined spectra reproduce SkyMapper photometry in synthetic band flux
-
----
-
-## Validation
-
-The Step11d implementation has been validated against a reference single-slit solver:
-
-* `dev/1slittester.py`
-
-This script reproduces the per-slit solution and is used for debugging and verification.
-
----
-
-## Additional tools
-
-### Signal-to-noise estimation
-
-Script:
 `step11c_part2_continuum_snr.py`
 
-* Computes continuum signal-to-noise per slit
-* Useful for:
+`step11c_part3_rank_calibrators.py`
 
-  * assessing spectral quality
-  * selecting reliable calibration stars
+These are diagnostic tools and are not required by the production chain.
 
-Often used together with:
+## Running
 
-* `step11c_part3_rank_calibrators.py`
+From the repository root:
 
-These tools are diagnostic and not part of the core pipeline execution.
+    PYTHONPATH=. python pipeline/step11_fluxcal/step11c_fluxcal.py
+    PYTHONPATH=. python pipeline/step11_fluxcal/step11d_ensemble_response.py
 
----
-
-## Notes
-
-* Inputs:
-
-  * Step08 (extraction)
-  * Step10 (telluric correction)
-
-* All scripts are designed to run from the repository root:
-
-```bash
-PYTHONPATH=. python ...
-```
-
----
-
-## Development scripts
-
-Reference and experimental tools are stored in:
-
-```
-dev/
-```
-
-These are not part of the production pipeline.
+Production paths are resolved through `config`.

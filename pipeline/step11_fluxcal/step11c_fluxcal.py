@@ -26,6 +26,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import numpy as np
+
+def _trapz(y, x):
+    """NumPy-version-compatible trapezoidal integration."""
+    fn = getattr(np, "trapezoid", None)
+    if fn is not None:
+        return fn(y, x)
+    return getattr(np, "trapz")(y, x)
+
 import pandas as pd
 import matplotlib.pyplot as plt
 from astropy.io import fits
@@ -100,8 +108,8 @@ def synth_counts_in_band(lam_nm: np.ndarray, counts: np.ndarray, bandpass: tuple
     m = thr_i > 0
     if m.sum() < 10:
         return np.nan
-    num = np.trapz(counts[m] * thr_i[m], lam_nm[m])
-    den = np.trapz(thr_i[m], lam_nm[m])
+    num = _trapz(counts[m] * thr_i[m], lam_nm[m])
+    den = _trapz(thr_i[m], lam_nm[m])
     if den <= 0:
         return np.nan
     return float(num / den)
@@ -129,8 +137,8 @@ def synth_abmag_from_flux(lam_nm: np.ndarray, flam_cgs: np.ndarray,
         m = thr_i > 0
         if m.sum() < 10:
             return np.nan
-        num = np.trapz(flam[m] * thr_i[m], lam_nm[m])
-        den = np.trapz(thr_i[m], lam_nm[m])
+        num = _trapz(flam[m] * thr_i[m], lam_nm[m])
+        den = _trapz(thr_i[m], lam_nm[m])
         if den <= 0:
             return np.nan
         flam_band = float(num / den)
@@ -203,24 +211,17 @@ def parse_args():
 def main():
     args = parse_args()
 
-    st10 = Path(config.ST10_TELLURIC)
     st11 = Path(config.ST11_FLUXCAL)
     st11.mkdir(parents=True, exist_ok=True)
 
-    # Default input: restored flow product
-    extract_fits = args.extract_fits
-    if extract_fits is None:
-        preferred = [
-            st10 / "extract1d_optimal_ridge_all_wav_ohclean_tellcorr.fits",
-            #st10 / "extract1d_optimal_ridge_all_wav_tellcorr_OHref_tellcorr.fits",
-        ]
-        extract_fits = None
-        for p in preferred:
-            if p.exists():
-                extract_fits = p
-                break
-    if extract_fits is None or not Path(extract_fits).exists():
-        raise FileNotFoundError("No suitable Step10 telluric-corrected FITS found")
+    # Default input: canonical Step10 telluric + relative-illumination product.
+    extract_fits = (
+        Path(args.extract_fits)
+        if args.extract_fits is not None
+        else Path(config.STEP11_INPUT_SPECTRA)
+    )
+    if not extract_fits.exists():
+        raise FileNotFoundError(extract_fits)
     
     phot_csv = args.phot_csv
     if phot_csv is None:
