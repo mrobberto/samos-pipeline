@@ -304,11 +304,11 @@ def main():
                         fphot = abmag_to_flam_cgs(float(prow[mag_col]), lam_eff)
                         ax.scatter(
                             [lam_eff], [fphot],
-                            s=38,
+                            s=70,
                             marker="o",
                             facecolor="gold",
                             edgecolor="k",
-                            linewidth=0.8,
+                            linewidth=1.0,
                             zorder=10,
                         )
                         ax.text(
@@ -366,8 +366,11 @@ def main():
 
             ax.set_ylim(lo, hi)
 
-        unit_tag = "final f_lambda" if mode == "FLUX_FLAM_STELLARRESP" else mode
-        ax.set_title(f"{r['slit']}  {unit_tag}", fontsize=8)
+        ax.set_title(
+            f"{r['slit']}",
+            fontsize=14,
+            fontweight="bold",
+        )
         ax.grid(True, alpha=0.20)
 
     for j in range(len(rows), len(axes)):

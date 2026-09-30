@@ -51,23 +51,6 @@ PIVOT_I_NM = 776.79762950059
 PIVOT_Z_NM = 914.5992987637427
 
 
-def _default_response_csv() -> Path:
-    name = "qc_step11_ensemble_response.csv"
-    candidates = [
-        Path(getattr(config, "ST11_FLUXCAL", ".")) / name,
-        Path(getattr(config, "ST11_FLUXCAL", ".")) / "qc_step11" / name,
-        Path(getattr(config, "ST10_TELLURIC", ".")) / name,
-        Path(getattr(config, "ST12_FINALCAL", ".")) / name,
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    raise FileNotFoundError(
-        "Could not find qc_step11_ensemble_response.csv. Tried:\n  "
-        + "\n  ".join(str(p) for p in candidates)
-    )
-
-
 def _companion_loo(path: Path) -> Path:
     return path.with_name(path.stem + "_loo.csv")
 
@@ -327,8 +310,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--out-fits", type=str, default="")
     ap.add_argument("--summary-csv", type=str, default="")
     ap.add_argument("--metadata-json", type=str, default="")
-    ap.add_argument("--trust-min", type=float, default=PIVOT_R_NM)
-    ap.add_argument("--trust-max", type=float, default=PIVOT_Z_NM)
+    ap.add_argument("--trust-min", type=float, default=600.0)
+    ap.add_argument("--trust-max", type=float, default=1000.0)
     ap.add_argument("--min-i-coverage", type=float, default=0.90)
     return ap.parse_args()
 
@@ -340,7 +323,13 @@ def main() -> None:
     )
     args = parse_args()
 
-    response_csv = Path(args.response_csv) if args.response_csv else _default_response_csv()
+    response_csv = (
+        Path(args.response_csv)
+        if args.response_csv
+        else Path(config.STEP11_ENSEMBLE_RESPONSE_CSV)
+    )
+    if not response_csv.exists():
+        raise FileNotFoundError(response_csv)
     spectra_path = Path(args.spectra) if args.spectra else Path(config.EXTRACT1D_STEP12_INPUT)
     out_fits = Path(args.out_fits) if args.out_fits else Path(config.STEP12D_MASTER_FITS)
     summary_csv = Path(args.summary_csv) if args.summary_csv else Path(config.STEP12D_SUMMARY_CSV)

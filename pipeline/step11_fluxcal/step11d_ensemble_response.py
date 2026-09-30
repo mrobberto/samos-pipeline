@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-QC-only ensemble broadband response fit for the SAMOS Step11/12 redesign.
+SAMOS Step11d ensemble broadband response fit.
 
-This diagnostic derives a COMMON smooth multiplicative response-shape
+This stage derives a COMMON smooth multiplicative response-shape
 correction directly from SkyMapper photometry, without fitting a stellar SED
 or blackbody to each object.
 
@@ -41,7 +41,8 @@ cross-validation is used to assess whether curvature genuinely generalizes.
 For the quadratic model, the LOO coefficient distribution is also propagated
 to a response-envelope CSV.
 
-This is QC only.  No science spectra are modified.
+This stage derives the production common response shape used by Step12d.
+No science spectra are modified by this stage.
 """
 
 from __future__ import annotations
@@ -271,9 +272,13 @@ def choose_flux_col(names):
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="QC ensemble SkyMapper response-shape fit"
+        description="SAMOS Step11d ensemble SkyMapper response-shape fit"
     )
-    p.add_argument("--infile", type=Path, required=True)
+    p.add_argument(
+        "--infile",
+        type=Path,
+        default=Path(config.STEP11_INPUT_SPECTRA),
+    )
     p.add_argument(
         "--phot-csv",
         type=Path,
@@ -286,8 +291,16 @@ def parse_args():
     )
     p.add_argument("--min-coverage", type=float, default=0.95)
     p.add_argument("--scale-nm", type=float, default=200.0)
-    p.add_argument("--out-response-csv", type=Path, required=True)
-    p.add_argument("--out-stars-csv", type=Path, required=True)
+    p.add_argument(
+        "--out-response-csv",
+        type=Path,
+        default=Path(config.STEP11_ENSEMBLE_RESPONSE_CSV),
+    )
+    p.add_argument(
+        "--out-stars-csv",
+        type=Path,
+        default=Path(config.STEP11_ENSEMBLE_RESPONSE_LOO_CSV),
+    )
     return p.parse_args()
 
 
@@ -510,7 +523,7 @@ def main():
 
     print("Wrote:", args.out_response_csv)
     print("Wrote:", args.out_stars_csv)
-    print("QC only; no spectra were modified.")
+    print("No spectra were modified.")
 
 
 if __name__ == "__main__":
